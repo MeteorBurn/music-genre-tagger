@@ -1,31 +1,19 @@
-# Python cache
-__pycache__/
-*.py[cod]
+# Ignore all directories by default
+*/
 
-# Virtual environments
-.venv/
-.venv-maest/
-venv/
+# Keep models directory (folder only)
+!models/
+models/*
+!models/.gitkeep
 
-# Build / packaging
-build/
-dist/
-*.egg-info/
+# Keep repository source/docs files in root
+!*.py
+!*.md
+!requirements.txt
+!.gitignore
 
-# IDE / OS
-.idea/
-.vscode/
-.DS_Store
-Thumbs.db
-
-# Local outputs
-json/
-json_new/
-_test_output/
-json_*_test/
-json_local_ckpt_test2/
-analysis.xlsx
-models/
-
-# Logs
+# Generated data/artifacts
+*.xlsx
+*.csv
+*.json
 *.log
