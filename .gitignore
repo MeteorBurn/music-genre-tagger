@@ -1,0 +1,31 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+.venv-maest/
+venv/
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local outputs
+json/
+json_new/
+_test_output/
+json_*_test/
+json_local_ckpt_test2/
+analysis.xlsx
+models/
+
+# Logs
+*.log
