@@ -1,154 +1,207 @@
-# Python Audio Pipeline
+# 🎵 PyTorch MAEST Tagger
 
-One-flow cross-platform pipeline for genre extraction with MAEST (PyTorch), Excel export, optional metadata tagging, and final markdown report.
+> Automatic genre detection and metadata tagging for music libraries using the MAEST deep learning model.
 
-## What this project is for
+---
 
-This project helps you analyze a music library and assign genre labels to tracks automatically. It provides a practical workflow for music cataloging with reproducible results.
+## 🧠 What this project does
 
-Why this is useful:
+This pipeline analyzes your music library, detects genres for each track using the **MAEST** model (PyTorch), exports results to Excel, and optionally writes genre tags directly into audio files.
 
-- It saves time compared to manual genre sorting for large libraries.
-- It provides consistent genre suggestions from the same model across all tracks.
-- It creates structured metadata (`json`, `tracks_genres.xlsx`, `report.md`) that is easy to review.
-- It can write selected genres directly into audio file tags, so music players and DJ software can filter and search by genre.
-- It supports incremental reruns, so you can process only new tracks later without rebuilding everything from scratch.
+**Why this is useful:**
 
-## New entry point
+- ⏱️ Saves hours of manual genre tagging for large libraries
+- 🎯 Consistent genre predictions from the same model across all tracks
+- 📊 Creates structured metadata (`json`, `tracks_genres.xlsx`, `report.md`) easy to review
+- 🎧 Writes genres into audio tags so DJ software and music players can filter by genre
+- 🔄 Supports incremental reruns — only new tracks are analyzed on next run
 
-- `src/main.py` is the only required script for running the full flow.
-- Internal modules:
-  - `src/environment.py`
-  - `src/pipeline.py`
-  - `src/extractor.py`
-  - `src/tagger.py`
-  - `src/config.py`
+---
 
-## What the flow does
+## 🗂️ Project structure
 
-1. Environment diagnostics with actionable fix instructions.
-2. Audio analysis to per-track JSON (`maest_519l_pytorch`).
-3. JSON aggregation to Excel (`tracks_genres.xlsx`) with dedupe by `file_path`.
-4. Optional genre tag writing into audio metadata.
-5. Final markdown report (`report.md`).
+```
+project/
+├── src/
+│   ├── main.py          # Entrypoint
+│   ├── pipeline.py      # Core flow orchestration
+│   ├── environment.py   # Environment and dependency checks
+│   ├── extractor.py     # JSON → Excel extraction
+│   ├── tagger.py        # Audio tag writing
+│   └── config.py        # User configuration
+├── requirements.txt
+├── README.md
+└── AGENTS.md
+```
 
-## Setup (PowerShell)
+---
+
+## ⚙️ Setup
+
+**Step 1 — Create virtual environment:**
 
 ```powershell
+# Windows (PowerShell)
 cd path\to\project
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
+```
+
+```bash
+# Linux / WSL / macOS
+cd path/to/project
+python -m venv .venv
+source .venv/bin/activate
+```
+
+**Step 2 — Install dependencies:**
+
+```bash
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Torch note:
+> 🚀 **GPU note:** On first run, startup automatically detects your NVIDIA GPU and installs a matching CUDA torch build (`cu121`). After install, rerun `python src/main.py` once to continue with updated packages.
 
-- `requirements.txt` includes `torch` and `torchaudio` baseline dependencies.
-- At startup, environment checks detect NVIDIA GPU and install a matching torch stack automatically.
-- On NVIDIA systems, CUDA build install command uses `--index-url https://download.pytorch.org/whl/cu121`.
-- Startup uses force-reinstall/no-cache for torch stack updates to avoid stale CPU wheel reuse.
-- If torch stack is installed/updated, rerun `python .\src\main.py` once to continue with updated packages.
+---
 
-## CLI usage
+## 🚀 Quick start
 
-Run all stages (default):
-
-```powershell
-python .\src\main.py
+```bash
+python src/main.py
 ```
 
-What this command does:
+The pipeline will:
+1. Check environment and dependencies
+2. Ask for input/output paths if not set in `config.py`
+3. Analyze all audio tracks → write JSON files
+4. Aggregate JSON into `tracks_genres.xlsx`
+5. Optionally write genres into audio tags
+6. Generate `report.md`
 
-- Runs the full pipeline in order: environment check -> analyze -> excel -> optional tag -> report.
-- If `input_directory` or `output_directory` is not configured, CLI asks for values interactively.
-- Best choice for normal day-to-day usage.
+---
 
-Run a specific stage:
+## 🔁 Pipeline flow
 
-```powershell
-python .\src\main.py --stage analyze
-python .\src\main.py --stage excel
-python .\src\main.py --stage tag
+| Stage | What it does |
+|-------|-------------|
+| **Environment** | Checks Python, dependencies, GPU/CPU, model checkpoint |
+| **Analyze** | Scans audio files, runs MAEST inference, writes per-track JSON |
+| **Excel** | Aggregates JSON files into `tracks_genres.xlsx` with deduplication |
+| **Tag** | Reads Excel and writes genres into audio file metadata tags |
+| **Report** | Generates `report.md` summary in the metadata folder |
+
+---
+
+## 📁 Output structure
+
+For each music library, metadata is stored in a dedicated folder:
+
+```
+<output_directory>/
+└── <music_folder_name>/
+    ├── json/
+    │   ├── track_name__hash.json
+    │   └── ...
+    ├── tracks_genres.xlsx
+    └── report.md
 ```
 
-What each stage command does:
+> If `output_directory` is not set, project root is used as base.
 
-- `--stage analyze` scans audio files, runs MAEST inference, and writes JSON files.
-- `--stage excel` reads JSON files and updates `tracks_genres.xlsx` with new records.
-- `--stage tag` reads `tracks_genres.xlsx` and writes genres into audio tags.
-- Stage-only commands are mainly useful for testing, debugging, or partial reruns.
+---
 
-## Command reference
+## 🔧 Configuration
 
-- `python .\src\main.py --stage all --input-directory "path/to/music_library_demo" --output-directory "path/to/output_meta_demo"`
-  - Full non-default path run. Creates/uses metadata project folder and executes all stages.
-- `python .\src\main.py --stage analyze --input-directory "path/to/music_library_demo" --max-files 20`
-  - Analyze only first 20 tracks (smoke or incremental test).
-- `python .\src\main.py --stage excel --input-directory "path/to/music_library_demo" --output-directory "path/to/output_meta_demo"`
-  - Build/update Excel for the metadata project derived from input/output paths.
-- `python .\src\main.py --stage tag --input-directory "path/to/music_library_demo" --output-directory "path/to/output_meta_demo"`
-  - Run tagging for the metadata project derived from input/output paths.
-- `python .\src\main.py --stage all --non-interactive --tag-no`
-  - CI/script mode. Disables prompts and skips tagging.
+Edit `src/config.py` to customize behavior:
 
-Stage options:
+```python
+# Paths
+INPUT_DIRECTORY = ""   # Path to your music library
+OUTPUT_DIRECTORY = ""  # Path to metadata output folder
 
-- `--stage all|analyze|excel|tag` (default `all`) - selects execution scope. `all` is the primary mode.
-- `--input-directory <path>` - source audio library directory used by analyze stage.
-- `--output-directory <path>` - base directory for generated metadata projects (one subfolder per input library).
-- `--file-pattern <text>` - analyzes only files whose names contain this substring.
-- `--max-files <N>` - hard cap on files processed in current analyze run.
-- `--convert-to-wav` - enables temporary WAV conversion before inference (for incompatible formats).
-- `--tag-yes` - for `--stage all`, always run tagging without interactive prompt.
-- `--tag-no` - for `--stage all`, always skip tagging without interactive prompt.
-- `--non-interactive` - disables input prompts; missing required values will cause explicit errors.
-- `--loglevel <level>` - logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`).
+# Analysis
+NUM_GENRES = 3         # Top-N genres per track
+AUDIO_EXTENSIONS = [".flac", ".wav", ".aiff", ".aif", ".m4a", ".dsf", ".ape", ".wv", ".mp3"]
 
-Example test values:
+# Model
+MODEL_FILE_PATH = ""   # Custom checkpoint path (optional)
+MODEL_KEY = ""         # Custom result key (used only with MODEL_FILE_PATH)
 
-- `--input-directory "path/to/music_library_demo"`
-- `--output-directory "path/to/output_meta_demo"`
+# Tagging
+OVERWRITE_EXISTING = False  # Keep existing genre tags
+MAX_TAG_GENRES = 3          # Max genres written to tags
+```
 
-## Paths and meta structure
+**Model rules:**
+- `MODEL_FILE_PATH` empty → default checkpoint auto-downloaded to `src/models/`
+- `MODEL_FILE_PATH` set → your checkpoint is used
+- `MODEL_KEY` is only used with a custom `MODEL_FILE_PATH`
 
-- If `input_directory` is empty and the selected stage needs analysis, the CLI asks for it.
-- If `output_directory` is empty and the selected stage uses analyze flow, the CLI asks for output base path.
-- If user skips output base path, project root is used as output base.
-- With `--non-interactive` and empty `output_directory`, project root is used as output base.
-- If no custom checkpoint path is provided, checkpoint is resolved at `src/models/discogs-maest-30s-pw-129e-519l-swa.ckpt`.
-- If default checkpoint is missing, it is downloaded into `src/models` automatically.
-- Meta root name is based on input directory name.
-- Required structure inside meta root:
-  - `json/`
-  - `tracks_genres.xlsx`
-  - `report.md`
+---
 
-## Model config rules
+## 💻 CLI reference
 
-- `MODEL_FILE_PATH` in `src/config.py`:
-  - empty -> model is loaded from default checkpoint in `src/models` (auto-download if missing).
-  - set -> pipeline loads your checkpoint file.
-- `MODEL_KEY` in `src/config.py`:
-  - used only when `MODEL_FILE_PATH` is set.
-  - ignored for default model mode (default key remains `maest_519l_pytorch`).
+```bash
+python src/main.py [options]
+```
 
-## Config notes
+| Option | Description |
+|--------|-------------|
+| `--stage all\|analyze\|excel\|tag` | Pipeline scope (default: `all`) |
+| `--input-directory <path>` | Source music library path |
+| `--output-directory <path>` | Metadata output base path |
+| `--file-pattern <text>` | Filter filenames by substring |
+| `--max-files <N>` | Limit tracks analyzed (test mode) |
+| `--convert-to-wav` | Force WAV conversion before inference |
+| `--tag-yes` | Auto-confirm tagging without prompt |
+| `--tag-no` | Auto-skip tagging without prompt |
+| `--non-interactive` | Disable all prompts |
+| `--loglevel <level>` | Verbosity: `DEBUG\|INFO\|WARNING\|ERROR\|CRITICAL` |
 
-- `AUDIO_EXTENSIONS` in `src/config.py` controls which file extensions are included in analysis.
-- Removing an extension from `AUDIO_EXTENSIONS` excludes that format from analysis.
-- Some formats require ffmpeg conversion before inference; if ffmpeg is unavailable, those files are skipped with per-file errors while pipeline continues.
-- Analyze-stage logs include per-track genres and elapsed time: `Analyzed: <file> [genre1, genre2, ...] (time: X.XXs)`.
+**Example commands:**
 
-## Invariants preserved
+```bash
+# Full run with explicit paths
+python src/main.py --input-directory "path/to/music" --output-directory "path/to/meta"
 
-- MAEST key in JSON: `maest_519l_pytorch`
-- Label cleanup: `A---B -> B`
-- Extractor fields:
-  - `file_path`
-  - `file_name`
-  - `genres_maest`
-  - `confidences`
-  - `is_broken_beat`
-  - `model_key`
-- Tagger safety default: `overwrite_existing = False`
+# Analyze only first 5 tracks (smoke test)
+python src/main.py --stage analyze --input-directory "path/to/music" --max-files 5
+
+# Rebuild Excel from existing JSON
+python src/main.py --stage excel --input-directory "path/to/music" --output-directory "path/to/meta"
+
+# Tag only (after Excel is ready)
+python src/main.py --stage tag --input-directory "path/to/music" --output-directory "path/to/meta"
+
+# Non-interactive CI mode, skip tagging
+python src/main.py --non-interactive --tag-no --input-directory "path/to/music"
+```
+
+---
+
+## 🎵 Supported audio formats
+
+| Format | Notes |
+|--------|-------|
+| `.flac` | Direct |
+| `.wav` | Direct |
+| `.aiff` / `.aif` | Direct |
+| `.mp3` | Direct |
+| `.m4a` | Via ffmpeg |
+| `.dsf` | Via ffmpeg |
+| `.ape` | Via ffmpeg |
+| `.wv` | Via ffmpeg |
+
+> ⚠️ Formats marked **Via ffmpeg** require `ffmpeg` in your system PATH. If unavailable, those tracks are skipped with a per-file error while the pipeline continues.
+
+---
+
+## 🔒 Invariants
+
+The following behaviors are preserved and must not be changed:
+
+- MAEST result key: `maest_519l_pytorch`
+- Label cleanup: `A---B → B`
+- Extractor fields: `file_path`, `file_name`, `genres_maest`, `confidences`, `is_broken_beat`, `model_key`
+- Tag safety default: `overwrite_existing = False`
