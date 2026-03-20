@@ -1,16 +1,21 @@
 # Ignore all directories by default
 */
 
-# Keep models directory (folder only)
-!models/
-models/*
-!models/.gitkeep
-
-# Keep repository source/docs files in root
-!*.py
-!*.md
-!requirements.txt
+# Keep repository source/docs files
 !.gitignore
+!README.md
+!AGENTS.md
+!requirements.txt
+!src/
+!src/**
+
+# Python/cache artifacts
+__pycache__/
+*.py[cod]
+.ruff_cache/
+
+# Local model storage (downloaded at runtime)
+src/models/
 
 # Generated data/artifacts
 *.xlsx

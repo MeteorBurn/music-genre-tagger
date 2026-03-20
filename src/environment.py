@@ -7,7 +7,6 @@ import re
 import shutil
 import sys
 from pathlib import Path
-from typing import Dict
 from typing import List
 from typing import Tuple
 
@@ -79,7 +78,10 @@ def _package_to_import_name(package_name: str) -> str:
 
 
 def run_environment_checks(
-    script_dir: Path, models_dir: str, checkpoint_filename: str
+    project_dir: Path,
+    models_dir: str,
+    checkpoint_filename: str,
+    checkpoint_path_value: str,
 ) -> bool:
     logging.info("Environment checks started")
     logging.info("Platform: %s", platform.platform())
@@ -93,7 +95,7 @@ def run_environment_checks(
             "Python version mismatch: %s (required %s)", current_py, required_py
         )
 
-    requirements_path = script_dir / "requirements.txt"
+    requirements_path = project_dir / "requirements.txt"
     packages = _parse_requirements(requirements_path)
     required_pairs: List[Tuple[str, str]]
     if packages:
@@ -165,13 +167,33 @@ def run_environment_checks(
         logging.warning("Torch runtime test skipped due to import error: %s", exc)
         logging.warning("Pipeline will continue, but audio analysis may fail")
 
-    checkpoint_path = script_dir / models_dir / checkpoint_filename
-    if checkpoint_filename:
+    checkpoint_path_raw = str(checkpoint_path_value).strip()
+    configured_checkpoint_path = None
+    if checkpoint_path_raw:
+        configured_checkpoint_path = Path(checkpoint_path_raw)
+        if not configured_checkpoint_path.is_absolute():
+            configured_checkpoint_path = project_dir / configured_checkpoint_path
+
+        if configured_checkpoint_path.is_file():
+            logging.info(
+                "Checkpoint found at configured path: %s",
+                configured_checkpoint_path,
+            )
+        else:
+            logging.error(
+                "Configured checkpoint path is invalid: %s",
+                configured_checkpoint_path,
+            )
+    elif checkpoint_filename:
+        checkpoint_path = project_dir / models_dir / checkpoint_filename
         if checkpoint_path.is_file():
             logging.info("Checkpoint found: %s", checkpoint_path)
         else:
             logging.warning("Checkpoint missing: %s", checkpoint_path)
-            logging.warning("maest_infer pretrained download mode can still work")
+            logging.info(
+                "Checkpoint will be downloaded to %s when model loading starts",
+                checkpoint_path,
+            )
 
     missing_unique = sorted(set(missing_packages))
     if missing_unique:
@@ -182,7 +204,15 @@ def run_environment_checks(
     if not maest_ok:
         logging.error("Fix maest_infer so `from maest_infer import get_maest` works")
 
-    hard_fail = (not ok_py) or bool(missing_unique) or (not maest_ok)
+    checkpoint_path_ok = (not checkpoint_path_raw) or (
+        configured_checkpoint_path is not None and configured_checkpoint_path.is_file()
+    )
+    hard_fail = (
+        (not ok_py)
+        or bool(missing_unique)
+        or (not maest_ok)
+        or (not checkpoint_path_ok)
+    )
     if hard_fail:
         logging.error("Environment checks failed")
         return False

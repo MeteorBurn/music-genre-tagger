@@ -1,16 +1,28 @@
-# MusicTagger
+# Python Audio Pipeline
 
 One-flow cross-platform pipeline for genre extraction with MAEST (PyTorch), Excel export, optional metadata tagging, and final markdown report.
 
+## What this project is for
+
+This project helps you analyze a music library and assign genre labels to tracks automatically. It provides a practical workflow for music cataloging with reproducible results.
+
+Why this is useful:
+
+- It saves time compared to manual genre sorting for large libraries.
+- It provides consistent genre suggestions from the same model across all tracks.
+- It creates structured metadata (`json`, `tracks_genres.xlsx`, `report.md`) that is easy to review.
+- It can write selected genres directly into audio file tags, so music players and DJ software can filter and search by genre.
+- It supports incremental reruns, so you can process only new tracks later without rebuilding everything from scratch.
+
 ## New entry point
 
-- `main.py` is the only required script for running the full flow.
+- `src/main.py` is the only required script for running the full flow.
 - Internal modules:
-  - `environment.py`
-  - `pipeline.py`
-  - `extractor.py`
-  - `tagger.py`
-  - `config.py`
+  - `src/environment.py`
+  - `src/pipeline.py`
+  - `src/extractor.py`
+  - `src/tagger.py`
+  - `src/config.py`
 
 ## What the flow does
 
@@ -23,9 +35,9 @@ One-flow cross-platform pipeline for genre extraction with MAEST (PyTorch), Exce
 ## Setup (PowerShell)
 
 ```powershell
-cd E:\Projects\MusicTagger
-python -m venv .venv-maest
-.\.venv-maest\Scripts\Activate.ps1
+cd path\to\project
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
@@ -35,36 +47,74 @@ pip install -r requirements.txt
 Run all stages (default):
 
 ```powershell
-python .\main.py
+python .\src\main.py
 ```
+
+What this command does:
+
+- Runs the full pipeline in order: environment check -> analyze -> excel -> optional tag -> report.
+- If `input_directory` or `output_directory` is not configured, CLI asks for values interactively.
+- Best choice for normal day-to-day usage.
 
 Run a specific stage:
 
 ```powershell
-python .\main.py --stage analyze
-python .\main.py --stage excel
-python .\main.py --stage tag
+python .\src\main.py --stage analyze
+python .\src\main.py --stage excel
+python .\src\main.py --stage tag
 ```
+
+What each stage command does:
+
+- `--stage analyze` scans audio files, runs MAEST inference, and writes JSON files.
+- `--stage excel` reads JSON files and updates `tracks_genres.xlsx` with new records.
+- `--stage tag` reads `tracks_genres.xlsx` and writes genres into audio tags.
+- Stage-only commands are mainly useful for testing, debugging, or partial reruns.
+
+## Command reference
+
+- `python .\src\main.py --stage all --input-directory "path/to/music_library_demo" --output-directory "path/to/output_meta_demo"`
+  - Full non-default path run. Creates/uses metadata project folder and executes all stages.
+- `python .\src\main.py --stage analyze --input-directory "path/to/music_library_demo" --max-files 20`
+  - Analyze only first 20 tracks (smoke or incremental test).
+- `python .\src\main.py --stage excel --json-directory "path/to/output_meta_demo/music_library_demo/json" --excel-path "path/to/output_meta_demo/music_library_demo/tracks_genres.xlsx"`
+  - Rebuild/update Excel from an existing JSON dataset.
+- `python .\src\main.py --stage tag --excel-path "path/to/output_meta_demo/music_library_demo/tracks_genres.xlsx"`
+  - Run only tagging from a prepared Excel file.
+- `python .\src\main.py --stage all --non-interactive --tag-no`
+  - CI/script mode. Disables prompts and skips tagging.
 
 Stage options:
 
-- `--stage all|analyze|excel|tag` (default `all`)
-- `--input-directory <path>`
-- `--output-directory <path>`
-- `--json-directory <path>`
-- `--excel-path <path>`
-- `--report-path <path>`
-- `--file-pattern <text>`
-- `--max-files <N>`
-- `--convert-to-wav`
-- `--tag-yes` or `--tag-no` (for `--stage all`)
-- `--non-interactive`
+- `--stage all|analyze|excel|tag` (default `all`) - selects execution scope. `all` is the primary mode.
+- `--input-directory <path>` - source audio library directory used by analyze stage.
+- `--output-directory <path>` - base directory for generated metadata projects (one subfolder per input library).
+- `--json-directory <path>` - explicit JSON directory override for analyze/excel test workflows.
+- `--excel-path <path>` - explicit Excel path override (`tracks_genres.xlsx`) for excel/tag workflows.
+- `--report-path <path>` - explicit markdown report output path (`report.md`).
+- `--file-pattern <text>` - analyzes only files whose names contain this substring.
+- `--max-files <N>` - hard cap on files processed in current analyze run.
+- `--convert-to-wav` - enables temporary WAV conversion before inference (for incompatible formats).
+- `--temp-dir <path>` - directory used to store temporary WAV files during conversion.
+- `--tag-yes` - for `--stage all`, always run tagging without interactive prompt.
+- `--tag-no` - for `--stage all`, always skip tagging without interactive prompt.
+- `--non-interactive` - disables input prompts; missing required values will cause explicit errors.
+- `--loglevel <level>` - logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`).
+
+Example test values:
+
+- `--input-directory "path/to/music_library_demo"`
+- `--output-directory "path/to/output_meta_demo"`
+- `--json-directory "path/to/output_meta_demo/music_library_demo/json"`
+- `--excel-path "path/to/output_meta_demo/music_library_demo/tracks_genres.xlsx"`
+- `--report-path "path/to/output_meta_demo/music_library_demo/report.md"`
 
 ## Paths and meta structure
 
 - If `input_directory` is empty and the selected stage needs analysis, the CLI asks for it.
 - If `output_directory` is empty and the selected stage uses analyze flow, the CLI asks for output base path.
 - If user skips output base path, project-relative `meta/` is used.
+- If no custom checkpoint path is provided, checkpoint is downloaded into `src/models/`.
 - Meta root name is based on input directory name.
 - Required structure inside meta root:
   - `json/`

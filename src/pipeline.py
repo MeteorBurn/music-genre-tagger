@@ -8,6 +8,7 @@ import re
 import subprocess
 import tempfile
 import traceback
+import urllib.request
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
@@ -356,11 +357,13 @@ def load_mono_16k(audio_path: Path, target_sr: int) -> np.ndarray:
 
 
 def resolve_checkpoint_path(
-    model_params: Dict[str, Any], models_dir: Path
+    model_params: Dict[str, Any], models_dir: Path, base_dir: Path
 ) -> Optional[Path]:
     checkpoint_path_raw = model_params.get("checkpoint_path", "")
     if checkpoint_path_raw:
         checkpoint_path = Path(checkpoint_path_raw)
+        if not checkpoint_path.is_absolute():
+            checkpoint_path = base_dir / checkpoint_path
         if not checkpoint_path.is_file():
             raise FileNotFoundError(
                 f"Checkpoint not found at configured checkpoint_path: {checkpoint_path}. "
@@ -373,13 +376,28 @@ def resolve_checkpoint_path(
         return None
 
     checkpoint_path = models_dir / checkpoint_filename
-    if not checkpoint_path.is_file():
-        logging.warning(
-            "Checkpoint not found at %s, using maest_infer pretrained mode",
-            checkpoint_path,
-        )
-        return None
-    return checkpoint_path
+    if checkpoint_path.is_file():
+        return checkpoint_path
+
+    checkpoint_url = str(model_params.get("checkpoint_url", "")).strip()
+    if checkpoint_url:
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        logging.info("Checkpoint not found at %s", checkpoint_path)
+        logging.info("Downloading checkpoint from %s", checkpoint_url)
+        try:
+            urllib.request.urlretrieve(checkpoint_url, str(checkpoint_path))
+        except Exception as exc:
+            raise RuntimeError(
+                f"Unable to download checkpoint from {checkpoint_url}: {exc}"
+            ) from exc
+        logging.info("Checkpoint downloaded to %s", checkpoint_path)
+        return checkpoint_path
+
+    logging.warning(
+        "Checkpoint not found at %s, using maest_infer pretrained mode",
+        checkpoint_path,
+    )
+    return None
 
 
 def load_models(config: Dict[str, Any], script_dir: Path) -> Dict[str, Any]:
@@ -390,12 +408,12 @@ def load_models(config: Dict[str, Any], script_dir: Path) -> Dict[str, Any]:
 
     models: Dict[str, Any] = {"maest": {}}
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    models_base_path = _resolve_path(script_dir, config.get("models_dir", "models"))
+    models_base_path = _resolve_path(script_dir, config.get("models_dir", "src/models"))
 
     for model_name, model_params in config.get("maest_models", {}).items():
         if not model_params.get("enabled", False):
             continue
-        ckpt_path = resolve_checkpoint_path(model_params, models_base_path)
+        ckpt_path = resolve_checkpoint_path(model_params, models_base_path, script_dir)
         arch = model_params.get("arch", "discogs-maest-30s-pw-129e-519l")
         use_pretrained = ckpt_path is None
 

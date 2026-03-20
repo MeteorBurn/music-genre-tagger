@@ -23,13 +23,14 @@ CONFIG: Dict[str, Any] = {
     "audio_offset": 60,
     "audio_duration": 30,
     "sample_rate": 16000,
-    "models_dir": "models",
+    "models_dir": "src/models",
     "maest_models": {
         "maest_519l_pytorch": {
             "enabled": True,
             "arch": "discogs-maest-30s-pw-129e-519l",
             "checkpoint_path": "",
             "checkpoint_filename": "discogs-maest-30s-pw-129e-519l-swa.ckpt",
+            "checkpoint_url": "https://huggingface.co/mtg-upf/discogs-maest-30s-pw-129e-519l/resolve/main/discogs-maest-30s-pw-129e-519l-swa.ckpt",
             "num_genres": 3,
         }
     },
