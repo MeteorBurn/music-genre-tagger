@@ -6,6 +6,8 @@ from pathlib import Path
 from config import get_config
 from environment import run_environment_checks
 from pipeline import apply_cli_overrides
+from pipeline import DEFAULT_CHECKPOINT_FILENAME
+from pipeline import DEFAULT_MODELS_DIR
 from pipeline import run_pipeline
 from pipeline import setup_logging
 
@@ -85,8 +87,8 @@ def main() -> int:
     project_dir = Path(__file__).resolve().parent.parent
     check_ok = run_environment_checks(
         project_dir,
-        "",
-        "",
+        DEFAULT_MODELS_DIR,
+        DEFAULT_CHECKPOINT_FILENAME,
         str(config.get("model_file_path", "")),
     )
     if not check_ok:

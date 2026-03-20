@@ -116,7 +116,8 @@ Example test values:
 - If `output_directory` is empty and the selected stage uses analyze flow, the CLI asks for output base path.
 - If user skips output base path, project root is used as output base.
 - With `--non-interactive` and empty `output_directory`, project root is used as output base.
-- If no custom checkpoint path is provided, MAEST pretrained mode is used (managed by `maest_infer`).
+- If no custom checkpoint path is provided, checkpoint is resolved at `src/models/discogs-maest-30s-pw-129e-519l-swa.ckpt`.
+- If default checkpoint is missing, it is downloaded into `src/models` automatically.
 - Meta root name is based on input directory name.
 - Required structure inside meta root:
   - `json/`
@@ -126,7 +127,7 @@ Example test values:
 ## Model config rules
 
 - `MODEL_FILE_PATH` in `src/config.py`:
-  - empty -> default model is used through `maest_infer` pretrained mode.
+  - empty -> model is loaded from default checkpoint in `src/models` (auto-download if missing).
   - set -> pipeline loads your checkpoint file.
 - `MODEL_KEY` in `src/config.py`:
   - used only when `MODEL_FILE_PATH` is set.

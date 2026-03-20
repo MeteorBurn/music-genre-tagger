@@ -8,6 +8,7 @@ import re
 import subprocess
 import tempfile
 import traceback
+import urllib.request
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
@@ -50,6 +51,9 @@ SOUNDFILE_DIRECT_EXTENSIONS = {".wav", ".flac", ".aiff", ".aif", ".ogg", ".mp3"}
 
 DEFAULT_MODEL_KEY = "maest_519l_pytorch"
 DEFAULT_MODEL_ARCH = "discogs-maest-30s-pw-129e-519l"
+DEFAULT_MODELS_DIR = "src/models"
+DEFAULT_CHECKPOINT_FILENAME = "discogs-maest-30s-pw-129e-519l-swa.ckpt"
+DEFAULT_CHECKPOINT_URL = "https://github.com/palonso/MAEST/releases/download/v0.0.0-beta/discogs-maest-30s-pw-129e-519l-swa.ckpt"
 
 
 @dataclass
@@ -141,6 +145,8 @@ def apply_model_runtime_defaults(
             "enabled": True,
             "arch": DEFAULT_MODEL_ARCH,
             "checkpoint_path": checkpoint_path,
+            "checkpoint_filename": DEFAULT_CHECKPOINT_FILENAME,
+            "checkpoint_url": DEFAULT_CHECKPOINT_URL,
         }
     }
     return runtime
@@ -393,10 +399,42 @@ def resolve_checkpoint_path(
         if not checkpoint_path.is_file():
             raise FileNotFoundError(
                 f"Checkpoint not found at configured checkpoint_path: {checkpoint_path}. "
-                "Clear 'checkpoint_path' to use maest_infer pretrained mode."
+                "Provide a valid MODEL_FILE_PATH or clear it to use the default src/models path."
             )
         return checkpoint_path
-    return None
+
+    checkpoint_filename = str(model_params.get("checkpoint_filename", "")).strip()
+    if not checkpoint_filename:
+        return None
+
+    checkpoint_url = str(model_params.get("checkpoint_url", "")).strip()
+    checkpoint_dir = base_dir / DEFAULT_MODELS_DIR
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_path = checkpoint_dir / checkpoint_filename
+
+    if checkpoint_path.is_file():
+        return checkpoint_path
+
+    if not checkpoint_url:
+        raise RuntimeError(
+            f"Checkpoint missing at {checkpoint_path} and no checkpoint_url was provided"
+        )
+
+    tmp_path = checkpoint_path.with_suffix(checkpoint_path.suffix + ".tmp")
+    logging.info("Checkpoint not found: %s", checkpoint_path)
+    logging.info("Downloading checkpoint to %s", checkpoint_path)
+    try:
+        urllib.request.urlretrieve(checkpoint_url, str(tmp_path))
+        if not tmp_path.is_file() or tmp_path.stat().st_size == 0:
+            raise RuntimeError("Downloaded checkpoint file is empty")
+        tmp_path.replace(checkpoint_path)
+    except Exception as exc:
+        tmp_path.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"Failed to download checkpoint from {checkpoint_url}: {exc}"
+        ) from exc
+
+    return checkpoint_path
 
 
 def load_models(config: Dict[str, Any], script_dir: Path) -> Dict[str, Any]:
@@ -411,15 +449,14 @@ def load_models(config: Dict[str, Any], script_dir: Path) -> Dict[str, Any]:
         if not model_params.get("enabled", False):
             continue
         ckpt_path = resolve_checkpoint_path(model_params, script_dir)
+        if ckpt_path is None:
+            raise RuntimeError("Resolved checkpoint path is empty")
         arch = model_params.get("arch", "discogs-maest-30s-pw-129e-519l")
-        use_pretrained = ckpt_path is None
-
-        model = get_maest(arch, pretrained=use_pretrained).eval().to(device)
-        if ckpt_path is not None:
-            state = torch.load(str(ckpt_path), map_location="cpu")
-            if isinstance(state, dict) and "state_dict" in state:
-                state = state["state_dict"]
-            model.load_state_dict(state, strict=False)
+        model = get_maest(arch, pretrained=False).eval().to(device)
+        state = torch.load(str(ckpt_path), map_location="cpu")
+        if isinstance(state, dict) and "state_dict" in state:
+            state = state["state_dict"]
+        model.load_state_dict(state, strict=False)
 
         if device == "cuda" and hasattr(model, "init_melspectrogram"):
             model.init_melspectrogram()
@@ -429,9 +466,7 @@ def load_models(config: Dict[str, Any], script_dir: Path) -> Dict[str, Any]:
         models["maest"][model_name] = {
             "model": model,
             "arch": arch,
-            "checkpoint": str(ckpt_path)
-            if ckpt_path is not None
-            else "pretrained:auto",
+            "checkpoint": str(ckpt_path),
             "device": device,
         }
 

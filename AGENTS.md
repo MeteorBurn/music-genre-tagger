@@ -171,7 +171,8 @@ If pytest tests are added later, run one test with:
   - uses force-reinstall/no-cache to avoid stale CPU wheel reuse,
   - requires one rerun after successful torch stack update.
 - Default checkpoint behavior must remain internal:
-  - if `MODEL_FILE_PATH` is empty, use built-in `maest_infer` pretrained logic.
+  - if `MODEL_FILE_PATH` is empty, use `src/models/discogs-maest-30s-pw-129e-519l-swa.ckpt`,
+  - if checkpoint is missing, download it into `src/models` and load from that path.
 - Keep `models/` artifacts out of git.
 
 ## 9) Change safety checklist
