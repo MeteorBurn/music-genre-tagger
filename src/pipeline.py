@@ -39,14 +39,14 @@ DEFAULT_AUDIO_EXTENSIONS = [
     ".wav",
     ".aiff",
     ".aif",
-    ".alac",
     ".m4a",
     ".dsf",
-    ".dff",
     ".ape",
     ".wv",
     ".mp3",
 ]
+
+SOUNDFILE_DIRECT_EXTENSIONS = {".wav", ".flac", ".aiff", ".aif", ".ogg", ".mp3"}
 
 DEFAULT_MODELS_DIR = "src/models"
 DEFAULT_MODEL_KEY = "maest_519l_pytorch"
@@ -505,7 +505,11 @@ def analyze_audio_file(
     temp_wav_file: Optional[Path] = None
     needs_cleanup = False
 
-    if config["convert_to_wav"] and original_audio_path.suffix.lower() != ".wav":
+    file_ext = original_audio_path.suffix.lower()
+    force_convert = file_ext not in SOUNDFILE_DIRECT_EXTENSIONS
+    should_convert = (config["convert_to_wav"] and file_ext != ".wav") or force_convert
+
+    if should_convert:
         temp_wav_file = convert_audio_to_wav(
             original_audio_path,
             config["sample_rate"],
@@ -516,7 +520,10 @@ def analyze_audio_file(
             path_to_analyze = temp_wav_file
             needs_cleanup = True
         else:
-            raise RuntimeError(f"Failed to convert audio file: {original_audio_path}")
+            raise RuntimeError(
+                f"Failed to convert audio file: {original_audio_path}. "
+                "Install ffmpeg and ensure this format is supported by your ffmpeg build."
+            )
 
     json_data: Dict[str, Any] = {
         "file_path": get_platform_paths(original_audio_path),
