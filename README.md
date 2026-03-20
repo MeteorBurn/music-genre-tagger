@@ -1,29 +1,24 @@
 # MusicTagger
 
-Windows pipeline for genre extraction with MAEST (PyTorch) and optional writing genres into audio tags.
+One-flow cross-platform pipeline for genre extraction with MAEST (PyTorch), Excel export, optional metadata tagging, and final markdown report.
 
-## What this project does
+## New entry point
 
-1. Analyze audio files with MAEST and save one JSON per track.
-2. Collect JSON results into an Excel table.
-3. Write predicted genres from Excel back into file metadata tags.
+- `main.py` is the only required script for running the full flow.
+- Internal modules:
+  - `environment.py`
+  - `pipeline.py`
+  - `extractor.py`
+  - `tagger.py`
+  - `config.py`
 
-## Scripts
+## What the flow does
 
-- `00_check_environment.py` - checks Python/modules from `requirements.txt`, MAEST API availability, FFmpeg, model file, and CPU/CUDA runtime.
-- `04_universal_audio_analyzer.py` - batch audio analysis with MAEST (`maest_519l_pytorch`), outputs JSON files.
-- `05_json_to_excel_extractor.py` - builds/updates `analysis.xlsx` from JSON outputs, skips duplicates by `file_path`, auto-adjusts column widths.
-- `06_audio_genres_tagger.py` - writes genres from Excel into audio tags using `mutagen`, updates `status`, auto-adjusts column widths.
-
-## Requirements
-
-Defined in `requirements.txt`:
-
-- `numpy`, `soundfile`
-- `torch`, `torchaudio`
-- `maest-infer`
-- `pandas`, `openpyxl`
-- `mutagen`
+1. Environment diagnostics with actionable fix instructions.
+2. Audio analysis to per-track JSON (`maest_519l_pytorch`).
+3. JSON aggregation to Excel (`tracks_genres.xlsx`) with dedupe by `file_path`.
+4. Optional genre tag writing into audio metadata.
+5. Final markdown report (`report.md`).
 
 ## Setup (PowerShell)
 
@@ -35,51 +30,56 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Optional CUDA 11.8 wheels (if needed explicitly):
+## CLI usage
+
+Run all stages (default):
 
 ```powershell
-pip install --upgrade --force-reinstall torch==2.6.0+cu118 torchaudio==2.6.0+cu118 torchvision==0.21.0+cu118 --index-url https://download.pytorch.org/whl/cu118
+python .\main.py
 ```
 
-Validate environment:
+Run a specific stage:
 
 ```powershell
-python .\00_check_environment.py
+python .\main.py --stage analyze
+python .\main.py --stage excel
+python .\main.py --stage tag
 ```
 
-## Required files and folders
+Stage options:
 
-- `models/discogs-maest-30s-pw-129e-519l-swa.ckpt`
-- input music folder path in `04_universal_audio_analyzer.py` (`CONFIG["input_directory"]`)
+- `--stage all|analyze|excel|tag` (default `all`)
+- `--input-directory <path>`
+- `--output-directory <path>`
+- `--json-directory <path>`
+- `--excel-path <path>`
+- `--report-path <path>`
+- `--file-pattern <text>`
+- `--max-files <N>`
+- `--convert-to-wav`
+- `--tag-yes` or `--tag-no` (for `--stage all`)
+- `--non-interactive`
 
-Notes:
+## Paths and meta structure
 
-- `04_universal_audio_analyzer.py` resolves relative paths from the script directory, so `models` and `json` work from any current shell folder.
-- Genres in JSON are saved without top-level prefix (`Electronic---Ambient` becomes `Ambient`).
+- If `input_directory` is empty and the selected stage needs analysis, the CLI asks for it.
+- If `output_directory` is empty and the selected stage uses analyze flow, the CLI asks for output base path.
+- If user skips output base path, project-relative `meta/` is used.
+- Meta root name is based on input directory name.
+- Required structure inside meta root:
+  - `json/`
+  - `tracks_genres.xlsx`
+  - `report.md`
 
-## Run order
+## Invariants preserved
 
-1) Analyze audio -> JSON:
-
-```powershell
-python .\04_universal_audio_analyzer.py
-```
-
-2) JSON -> Excel:
-
-```powershell
-python .\05_json_to_excel_extractor.py
-```
-
-3) Excel -> audio tags:
-
-```powershell
-python .\06_audio_genres_tagger.py
-```
-
-## Default behavior highlights
-
-- Analyzer model key in JSON: `maest_519l_pytorch`
-- Excel source key for genres: `genres_maest`
-- Tagging overwrite policy: `overwrite_existing = False` (existing genre tags are preserved)
-- Status tracking in Excel: `status` column (`success`, `skipped`, `error`)
+- MAEST key in JSON: `maest_519l_pytorch`
+- Label cleanup: `A---B -> B`
+- Extractor fields:
+  - `file_path`
+  - `file_name`
+  - `genres_maest`
+  - `confidences`
+  - `is_broken_beat`
+  - `model_key`
+- Tagger safety default: `overwrite_existing = False`

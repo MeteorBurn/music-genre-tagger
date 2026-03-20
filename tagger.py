@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 import logging
+import platform
 from pathlib import Path
+from typing import Any
+from typing import Dict
 
 import pandas as pd
 from openpyxl import load_workbook
@@ -13,68 +15,32 @@ from mutagen.mp3 import MP3
 from mutagen.wave import WAVE
 
 
-# =============================================================================
-# SCRIPT CONFIGURATION
-# =============================================================================
-CONFIG = {
-    "excel_file": "analysis.xlsx",
-    "genre_source_field": "genres_maest",
-    "file_path_field": "file_path",
-    "status_field": "status",
-    "genre_separator": "; ",
-    "max_genres": 3,
-    "overwrite_existing": False,
-    "max_rows": None,
-    "loglevel": "INFO",
-}
-
-
-SCRIPT_DIR = Path(__file__).resolve().parent
-
-
-def setup_logging(level: str):
-    log_level = getattr(logging, level.upper(), logging.INFO)
-    logging.basicConfig(
-        level=log_level, format="%(asctime)s - %(levelname)s - %(message)s"
-    )
-
-
-def resolve_path(path_value: str) -> Path:
-    p = Path(path_value)
-    if p.is_absolute():
-        return p
-    return SCRIPT_DIR / p
-
-
-def is_wsl_environment() -> bool:
-    try:
-        with open("/proc/version", "r", encoding="utf-8") as f:
-            return "microsoft" in f.read().lower()
-    except Exception:
-        return False
+def _is_wsl_environment() -> bool:
+    return "microsoft" in platform.uname().release.lower()
 
 
 def convert_path_for_current_env(file_path: str) -> str:
     if not isinstance(file_path, str):
         return str(file_path) if file_path else ""
 
-    if is_wsl_environment():
+    if _is_wsl_environment():
         if len(file_path) >= 3 and file_path[1] == ":" and file_path[2] in ["\\", "/"]:
             drive = file_path[0].lower()
             rest = file_path[3:].replace("\\", "/")
             return f"/mnt/{drive}/{rest}"
         return file_path
 
-    if file_path.startswith("/mnt/"):
+    if platform.system().lower().startswith("win") and file_path.startswith("/mnt/"):
         parts = file_path.split("/")
         if len(parts) > 2:
             drive = parts[2].upper()
             rest = "\\".join(parts[3:])
             return f"{drive}:\\{rest}"
+
     return file_path
 
 
-def get_existing_genre(audio_file):
+def get_existing_genre(audio_file: Any):
     try:
         if isinstance(audio_file, WAVE):
             if hasattr(audio_file, "tags") and audio_file.tags:
@@ -112,11 +78,11 @@ def get_existing_genre(audio_file):
                     else None
                 )
     except Exception:
-        pass
+        return None
     return None
 
 
-def set_genre_tag(audio_file, genre_value: str) -> bool:
+def set_genre_tag(audio_file: Any, genre_value: str) -> bool:
     try:
         if isinstance(audio_file, WAVE):
             if not hasattr(audio_file, "tags") or not audio_file.tags:
@@ -129,7 +95,6 @@ def set_genre_tag(audio_file, genre_value: str) -> bool:
                 audio_file.tags.add(TCON(encoding=3, text=[genre_value]))
             else:
                 audio_file.tags["IGNR"] = genre_value
-
         elif isinstance(audio_file, MP3):
             if not hasattr(audio_file, "tags") or not audio_file.tags:
                 audio_file.add_tags()
@@ -138,10 +103,8 @@ def set_genre_tag(audio_file, genre_value: str) -> bool:
             if "TCON" in audio_file.tags:
                 del audio_file.tags["TCON"]
             audio_file.tags.add(TCON(encoding=3, text=[genre_value]))
-
         elif isinstance(audio_file, FLAC):
             audio_file["GENRE"] = genre_value
-
         else:
             if not hasattr(audio_file, "tags") or not audio_file.tags:
                 audio_file.add_tags()
@@ -154,22 +117,21 @@ def set_genre_tag(audio_file, genre_value: str) -> bool:
             else:
                 audio_file["GENRE"] = genre_value
         return True
-    except Exception as e:
-        logging.error("Error setting genre: %s", e)
+    except Exception as exc:
+        logging.error("Error setting genre tag: %s", exc)
         return False
 
 
-def prepare_genre_string(genre_data, max_genres, separator):
+def prepare_genre_string(genre_data: Any, max_genres: int, separator: str):
     if pd.isna(genre_data) or not str(genre_data).strip():
         return None
-
-    genres = [g.strip() for g in str(genre_data).split(",") if g.strip()]
+    genres = [genre.strip() for genre in str(genre_data).split(",") if genre.strip()]
     if max_genres and len(genres) > max_genres:
         genres = genres[:max_genres]
     return separator.join(genres)
 
 
-def map_status(result: str) -> str:
+def _map_status(result: str) -> str:
     if result == "success":
         return "success"
     if result == "skipped_existing":
@@ -177,126 +139,97 @@ def map_status(result: str) -> str:
     return "error"
 
 
-def process_audio_file(file_path, genre_data, config) -> str:
-    normalized_path = convert_path_for_current_env(file_path)
+def _process_audio_file(file_path: Any, genre_data: Any, config: Dict[str, Any]) -> str:
+    normalized_path = convert_path_for_current_env(str(file_path))
     path_obj = Path(normalized_path)
     if not path_obj.exists():
-        logging.debug("File not found: %s", normalized_path)
         return "file_not_found"
 
     try:
         audio_file = File(str(path_obj))
         if audio_file is None:
-            logging.warning("Unsupported format: %s", normalized_path)
             return "unsupported_format"
-    except Exception as e:
-        logging.error("Error loading %s: %s", normalized_path, e)
+    except Exception as exc:
+        logging.error("Error loading %s: %s", normalized_path, exc)
         return "load_error"
 
     existing_genre = get_existing_genre(audio_file)
     if existing_genre and not config["overwrite_existing"]:
-        logging.debug("Genre exists in %s: %s", path_obj.name, existing_genre)
         return "skipped_existing"
 
     genre_string = prepare_genre_string(
-        genre_data, config["max_genres"], config["genre_separator"]
+        genre_data,
+        config["max_genres"],
+        config["genre_separator"],
     )
     if not genre_string:
-        logging.warning("Empty genre data for %s", path_obj.name)
         return "empty_genre"
 
     if set_genre_tag(audio_file, genre_string):
         try:
             audio_file.save()
-            action = "Updated" if existing_genre else "Added"
-            logging.info("%s genre '%s' in %s", action, genre_string, path_obj.name)
             return "success"
-        except Exception as e:
-            logging.error("Error saving %s: %s", normalized_path, e)
+        except Exception as exc:
+            logging.error("Error saving %s: %s", normalized_path, exc)
             return "save_error"
-
     return "tag_error"
 
 
-def run_genre_tagging(config):
-    logging.info("Starting genre tagging process")
-    excel_path = resolve_path(config["excel_file"])
-
-    if not excel_path.is_file():
-        logging.critical("Excel file not found: %s", excel_path)
-        return
-
-    try:
-        df = pd.read_excel(excel_path)
-        logging.info("Loaded Excel file with %d rows", len(df))
-    except Exception as e:
-        logging.critical("Error reading Excel file: %s", e)
-        return
-
-    required_columns = [config["file_path_field"], config["genre_source_field"]]
-    missing_columns = [col for col in required_columns if col not in df.columns]
-    if missing_columns:
-        logging.critical("Missing columns: %s", missing_columns)
-        return
-
-    if config["status_field"] not in df.columns:
-        df[config["status_field"]] = ""
-        logging.info("Created '%s' column", config["status_field"])
-
-    if config["max_rows"]:
-        df = df.head(config["max_rows"])
-        logging.info("Processing %d rows (limited)", len(df))
-
-    results = {"success": 0, "skipped": 0, "error": 0, "already_processed": 0}
-
-    for index, row in df.iterrows():
-        current_status = row.get(config["status_field"], "")
-        if current_status == "success":
-            results["already_processed"] += 1
-            continue
-
-        file_path = row[config["file_path_field"]]
-        genre_data = row[config["genre_source_field"]]
-
-        result = process_audio_file(file_path, genre_data, config)
-        status = map_status(result)
-        df.at[index, config["status_field"]] = status
-        results[status] += 1
-
-    try:
-        df.to_excel(excel_path, index=False)
-        auto_adjust_excel_columns(excel_path)
-        logging.info("Updated Excel file: %s", excel_path)
-    except Exception as e:
-        logging.error("Error saving Excel file: %s", e)
-
-    logging.info("Genre tagging completed")
-    logging.info("Success: %d", results["success"])
-    logging.info("Skipped: %d", results["skipped"])
-    logging.info("Error: %d", results["error"])
-    logging.info("Already processed: %d", results["already_processed"])
-
-
-def auto_adjust_excel_columns(excel_path: Path):
-    wb = load_workbook(excel_path)
-    ws = wb.active
-
-    for column_cells in ws.columns:
+def auto_adjust_excel_columns(excel_path: Path) -> None:
+    workbook = load_workbook(excel_path)
+    worksheet = workbook.active
+    for column_cells in worksheet.columns:
         max_len = 0
         column_letter = column_cells[0].column_letter
         for cell in column_cells:
             value = "" if cell.value is None else str(cell.value)
             if len(value) > max_len:
                 max_len = len(value)
-        ws.column_dimensions[column_letter].width = min(max_len + 2, 80)
+        worksheet.column_dimensions[column_letter].width = min(max_len + 2, 80)
+    workbook.save(excel_path)
 
-    wb.save(excel_path)
 
+def run_genre_tagging(excel_path: Path, config: Dict[str, Any]) -> Dict[str, int]:
+    if not excel_path.is_file():
+        raise RuntimeError(f"Excel file not found: {excel_path}")
 
-if __name__ == "__main__":
-    setup_logging(CONFIG.get("loglevel", "INFO"))
     try:
-        run_genre_tagging(CONFIG)
-    except Exception as e:
-        logging.critical("Critical error: %s", e)
-        raise SystemExit(1)
+        dataframe = pd.read_excel(excel_path)
+    except Exception as exc:
+        raise RuntimeError(f"Unable to read Excel file {excel_path}: {exc}") from exc
+
+    required_columns = [config["file_path_field"], config["genre_source_field"]]
+    missing_columns = [
+        column for column in required_columns if column not in dataframe.columns
+    ]
+    if missing_columns:
+        joined = ", ".join(missing_columns)
+        raise RuntimeError(f"Missing required columns in Excel: {joined}")
+
+    status_field = config["status_field"]
+    if status_field not in dataframe.columns:
+        dataframe[status_field] = ""
+
+    if config["max_rows"]:
+        dataframe = dataframe.head(config["max_rows"]).copy()
+
+    results = {"success": 0, "skipped": 0, "error": 0, "already_processed": 0}
+
+    for index, row in dataframe.iterrows():
+        current_status = row.get(status_field, "")
+        if current_status == "success":
+            results["already_processed"] += 1
+            continue
+
+        process_result = _process_audio_file(
+            row[config["file_path_field"]],
+            row[config["genre_source_field"]],
+            config,
+        )
+        mapped_status = _map_status(process_result)
+        dataframe.at[index, status_field] = mapped_status
+        results[mapped_status] += 1
+
+    dataframe.to_excel(excel_path, index=False)
+    auto_adjust_excel_columns(excel_path)
+    return results
