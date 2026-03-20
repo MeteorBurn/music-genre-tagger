@@ -22,17 +22,7 @@ AUDIO_OFFSET = 60  # Segment start in seconds
 AUDIO_DURATION = 30  # Segment length in seconds
 SAMPLE_RATE = 16000  # Target sample rate
 NUM_GENRES = 3  # Top-N genres per track
-AUDIO_EXTENSIONS = [
-    ".flac",
-    ".wav",
-    ".aiff",
-    ".aif",
-    ".m4a",
-    ".dsf",
-    ".ape",
-    ".wv",
-    ".mp3",
-]  # Formats included in analysis; remove an extension to exclude that format
+AUDIO_EXTENSIONS = [".flac", ".wav", ".aiff", ".aif", ".m4a", ".dsf", ".ape", ".wv", ".mp3"]  # Formats included in analysis; remove an extension to exclude that format
 
 # Model
 MODEL_FILE_PATH = ""  # Optional custom checkpoint file path
