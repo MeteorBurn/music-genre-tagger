@@ -3,7 +3,7 @@
 import argparse
 from pathlib import Path
 
-from config import CONFIG
+from config import get_config
 from environment import run_environment_checks
 from pipeline import apply_cli_overrides
 from pipeline import run_pipeline
@@ -23,7 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Path to your audio library directory. "
-            "Required for analyze/all stages unless set in src/config.py."
+            "Required for all stages unless set in src/config.py."
         ),
     )
     parser.add_argument(
@@ -33,27 +33,6 @@ def build_parser() -> argparse.ArgumentParser:
             "Base directory for generated metadata projects. "
             "Pipeline creates a subfolder named after input directory."
         ),
-    )
-    parser.add_argument(
-        "--json-directory",
-        default=None,
-        help=(
-            "Explicit JSON directory for analyze/excel stages. "
-            "Useful for tests or rerunning a specific dataset."
-        ),
-    )
-    parser.add_argument(
-        "--excel-path",
-        default=None,
-        help=(
-            "Explicit output path for tracks_genres.xlsx. "
-            "Mainly useful for excel/tag stage tests."
-        ),
-    )
-    parser.add_argument(
-        "--report-path",
-        default=None,
-        help="Explicit output path for final report.md.",
     )
     parser.add_argument(
         "--file-pattern",
@@ -73,11 +52,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--convert-to-wav",
         action="store_true",
         help="Convert non-WAV tracks to temporary WAV before analysis.",
-    )
-    parser.add_argument(
-        "--temp-dir",
-        default=None,
-        help="Directory for temporary conversion files when --convert-to-wav is used.",
     )
     parser.add_argument(
         "--tag-yes",
@@ -105,11 +79,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
-    config = apply_cli_overrides(CONFIG, args)
+    config = apply_cli_overrides(get_config(), args)
 
     setup_logging(config.get("loglevel", "INFO"))
     project_dir = Path(__file__).resolve().parent.parent
-    model_config = config.get("maest_models", {}).get("maest_519l_pytorch", {})
+    model_key = config.get("maest_result_key", "maest_519l_pytorch")
+    model_config = config.get("maest_models", {}).get(model_key, {})
 
     check_ok = run_environment_checks(
         project_dir,

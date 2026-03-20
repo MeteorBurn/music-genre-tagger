@@ -77,10 +77,10 @@ What each stage command does:
   - Full non-default path run. Creates/uses metadata project folder and executes all stages.
 - `python .\src\main.py --stage analyze --input-directory "path/to/music_library_demo" --max-files 20`
   - Analyze only first 20 tracks (smoke or incremental test).
-- `python .\src\main.py --stage excel --json-directory "path/to/output_meta_demo/music_library_demo/json" --excel-path "path/to/output_meta_demo/music_library_demo/tracks_genres.xlsx"`
-  - Rebuild/update Excel from an existing JSON dataset.
-- `python .\src\main.py --stage tag --excel-path "path/to/output_meta_demo/music_library_demo/tracks_genres.xlsx"`
-  - Run only tagging from a prepared Excel file.
+- `python .\src\main.py --stage excel --input-directory "path/to/music_library_demo" --output-directory "path/to/output_meta_demo"`
+  - Build/update Excel for the metadata project derived from input/output paths.
+- `python .\src\main.py --stage tag --input-directory "path/to/music_library_demo" --output-directory "path/to/output_meta_demo"`
+  - Run tagging for the metadata project derived from input/output paths.
 - `python .\src\main.py --stage all --non-interactive --tag-no`
   - CI/script mode. Disables prompts and skips tagging.
 
@@ -89,13 +89,9 @@ Stage options:
 - `--stage all|analyze|excel|tag` (default `all`) - selects execution scope. `all` is the primary mode.
 - `--input-directory <path>` - source audio library directory used by analyze stage.
 - `--output-directory <path>` - base directory for generated metadata projects (one subfolder per input library).
-- `--json-directory <path>` - explicit JSON directory override for analyze/excel test workflows.
-- `--excel-path <path>` - explicit Excel path override (`tracks_genres.xlsx`) for excel/tag workflows.
-- `--report-path <path>` - explicit markdown report output path (`report.md`).
 - `--file-pattern <text>` - analyzes only files whose names contain this substring.
 - `--max-files <N>` - hard cap on files processed in current analyze run.
 - `--convert-to-wav` - enables temporary WAV conversion before inference (for incompatible formats).
-- `--temp-dir <path>` - directory used to store temporary WAV files during conversion.
 - `--tag-yes` - for `--stage all`, always run tagging without interactive prompt.
 - `--tag-no` - for `--stage all`, always skip tagging without interactive prompt.
 - `--non-interactive` - disables input prompts; missing required values will cause explicit errors.
@@ -105,9 +101,6 @@ Example test values:
 
 - `--input-directory "path/to/music_library_demo"`
 - `--output-directory "path/to/output_meta_demo"`
-- `--json-directory "path/to/output_meta_demo/music_library_demo/json"`
-- `--excel-path "path/to/output_meta_demo/music_library_demo/tracks_genres.xlsx"`
-- `--report-path "path/to/output_meta_demo/music_library_demo/report.md"`
 
 ## Paths and meta structure
 

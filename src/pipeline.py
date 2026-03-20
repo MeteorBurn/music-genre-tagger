@@ -88,20 +88,12 @@ def apply_cli_overrides(base_config: Dict[str, Any], args: Any) -> Dict[str, Any
         config["input_directory"] = args.input_directory
     if args.output_directory is not None:
         config["output_directory"] = args.output_directory
-    if args.json_directory is not None:
-        config["json_directory"] = args.json_directory
-    if args.excel_path is not None:
-        config["excel_path"] = args.excel_path
-    if args.report_path is not None:
-        config["report_path"] = args.report_path
     if args.file_pattern is not None:
         config["file_pattern"] = args.file_pattern
     if args.max_files is not None:
         config["max_files"] = args.max_files
     if args.convert_to_wav:
         config["convert_to_wav"] = True
-    if args.temp_dir is not None:
-        config["temp_dir"] = args.temp_dir
     if args.tag_yes:
         config["tag_mode"] = "yes"
     elif args.tag_no:
@@ -124,7 +116,7 @@ def _prompt_for_path(prompt_text: str, allow_empty: bool) -> str:
 def _determine_input_dir(
     script_dir: Path, config: Dict[str, Any], stage: str, non_interactive: bool
 ) -> Optional[Path]:
-    needs_input = stage in ["all", "analyze"]
+    needs_input = stage in ["all", "analyze", "excel", "tag"]
     configured = str(config.get("input_directory", "")).strip()
     if not needs_input and not configured:
         return None
@@ -149,7 +141,7 @@ def _determine_input_dir(
 def _determine_output_base(
     script_dir: Path, config: Dict[str, Any], stage: str, non_interactive: bool
 ) -> Optional[Path]:
-    uses_meta = stage in ["all", "analyze"]
+    uses_meta = stage in ["all", "analyze", "excel", "tag"]
     configured = str(config.get("output_directory", "")).strip()
     if not uses_meta and not configured:
         return None
@@ -184,32 +176,14 @@ def build_runtime_paths(
     if input_dir and output_base:
         meta_root = output_base / _slugify(input_dir.name)
 
-    json_directory_value = str(config.get("json_directory", "")).strip()
-    excel_path_value = str(config.get("excel_path", "")).strip()
-    report_path_value = str(config.get("report_path", "")).strip()
-
-    if json_directory_value:
-        json_dir = _resolve_path(script_dir, json_directory_value)
-    elif meta_root:
-        json_dir = meta_root / "json"
-    else:
+    if not meta_root:
         raise RuntimeError(
-            "json directory is undefined; set config['json_directory'] or provide analyze flow paths"
+            "Unable to build runtime paths: input_directory and output_directory are required"
         )
 
-    if excel_path_value:
-        excel_path = _resolve_path(script_dir, excel_path_value)
-    elif meta_root:
-        excel_path = meta_root / "tracks_genres.xlsx"
-    else:
-        excel_path = json_dir.parent / "tracks_genres.xlsx"
-
-    if report_path_value:
-        report_path = _resolve_path(script_dir, report_path_value)
-    elif meta_root:
-        report_path = meta_root / "report.md"
-    else:
-        report_path = excel_path.parent / "report.md"
+    json_dir = meta_root / "json"
+    excel_path = meta_root / "tracks_genres.xlsx"
+    report_path = meta_root / "report.md"
 
     json_dir.parent.mkdir(parents=True, exist_ok=True)
     return RuntimePaths(
@@ -476,7 +450,7 @@ def analyze_audio_file(
             original_audio_path,
             config["sample_rate"],
             config["ffmpeg_path"],
-            config.get("temp_dir"),
+            None,
         )
         if temp_wav_file:
             path_to_analyze = temp_wav_file
@@ -513,8 +487,7 @@ def analyze_audio_file(
         audio_tensor = torch.from_numpy(audio).float()
         all_results: Dict[str, Any] = {}
         for name, maest_data in models.get("maest", {}).items():
-            model_params = config.get("maest_models", {}).get(name, {})
-            top_n = model_params.get("num_genres", 5)
+            top_n = int(config.get("num_genres", 3) or 3)
             model = maest_data["model"]
             device = maest_data["device"]
             wav = audio_tensor.to(device)
