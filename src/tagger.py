@@ -95,13 +95,14 @@ def _read_first_existing_genre(audio_file: Any, keys: list[str]) -> str:
 def _set_id3_genre(audio_file: Any, genre_value: str) -> None:
     from mutagen.id3 import TCON
 
-    if not hasattr(audio_file, "tags") or not audio_file.tags:
+    # tags may be None OR an empty dict-like object — check by identity not truthiness
+    if not hasattr(audio_file, "tags") or audio_file.tags is None:
         try:
             audio_file.add_tags()
         except Exception:
             pass
 
-    if not audio_file.tags:
+    if audio_file.tags is None:
         raise RuntimeError("Unable to create or access ID3 tags")
 
     if "TCON" in audio_file.tags:
