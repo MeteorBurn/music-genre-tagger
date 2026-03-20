@@ -123,6 +123,12 @@ Example test values:
   - used only when `MODEL_FILE_PATH` is set.
   - ignored for default model mode (default key remains `maest_519l_pytorch`).
 
+## Config notes
+
+- `AUDIO_EXTENSIONS` in `src/config.py` controls which file extensions are included in analysis.
+- Removing an extension from `AUDIO_EXTENSIONS` excludes that format from analysis.
+- Some formats require ffmpeg conversion before inference; if ffmpeg is unavailable, those files are skipped with per-file errors while pipeline continues.
+
 ## Invariants preserved
 
 - MAEST key in JSON: `maest_519l_pytorch`
