@@ -52,8 +52,24 @@ def _extract_text_tag_value(value: Any) -> str:
             if text:
                 return text
         return ""
+    # Handle mutagen ID3 frame objects (TCON, TPE1, etc.) — they stringify to their text content
     text = str(value).strip()
     return text
+
+
+def _get_id3_tag_text(audio_file: Any, key: str) -> str:
+    if not hasattr(audio_file, "tags") or not audio_file.tags:
+        return ""
+    value = audio_file.tags.get(key)
+    if value is None:
+        return ""
+    # ID3 frame objects have a .text attribute with a list of strings
+    if hasattr(value, "text") and isinstance(value.text, list):
+        for item in value.text:
+            text = str(item).strip()
+            if text:
+                return text
+    return str(value).strip()
 
 
 def _is_mp4_like(audio_file: Any, file_extension: str) -> bool:
@@ -104,9 +120,15 @@ def get_existing_genre(audio_file: Any, file_extension: str):
             genre = _read_first_existing_genre(audio_file, ["GENRE", "Genre"])
             return genre or None
 
+        # For ID3-based formats use dedicated ID3 frame reader first
+        for key in ["TCON", "IGNR"]:
+            text = _get_id3_tag_text(audio_file, key)
+            if text:
+                return text
+
         genre = _read_first_existing_genre(
             audio_file,
-            ["TCON", "IGNR", "GENRE", "Genre", "\xa9gen"],
+            ["GENRE", "Genre", "\xa9gen"],
         )
         return genre or None
     except Exception:
