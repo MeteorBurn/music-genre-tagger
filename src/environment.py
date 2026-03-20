@@ -5,6 +5,7 @@ import logging
 import platform
 import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import List
@@ -14,6 +15,8 @@ from typing import Tuple
 PACKAGE_IMPORT_MAP = {
     "maest-infer": "maest_infer",
 }
+
+CUDA_WHEEL_INDEX = "https://download.pytorch.org/whl/cu121"
 
 
 def _check_python_version() -> Tuple[bool, str, str]:
@@ -46,6 +49,45 @@ def _check_maest_api() -> Tuple[bool, str]:
 def _check_ffmpeg() -> Tuple[bool, str]:
     ffmpeg_path = shutil.which("ffmpeg")
     return ffmpeg_path is not None, ffmpeg_path or ""
+
+
+def _has_nvidia_gpu() -> bool:
+    nvidia_smi = shutil.which("nvidia-smi")
+    if not nvidia_smi:
+        return False
+    try:
+        completed = subprocess.run(
+            [nvidia_smi, "--query-gpu=name", "--format=csv,noheader"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        return completed.returncode == 0 and bool(completed.stdout.strip())
+    except Exception:
+        return False
+
+
+def _install_torch_cuda_build() -> Tuple[bool, str]:
+    cmd = [
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "--upgrade",
+        "torch",
+        "torchaudio",
+        "torchvision",
+        "--index-url",
+        CUDA_WHEEL_INDEX,
+    ]
+    try:
+        completed = subprocess.run(cmd, check=False, capture_output=True, text=True)
+        if completed.returncode == 0:
+            return True, ""
+        error_text = (completed.stderr or completed.stdout or "").strip()
+        return False, error_text
+    except Exception as exc:
+        return False, str(exc)
 
 
 def _parse_requirements(requirements_path: Path) -> List[str]:
@@ -133,8 +175,35 @@ def run_environment_checks(
         logging.warning("FFmpeg was not found in PATH")
 
     torch_runtime_warning = False
+    torch_gpu_install_required = False
     try:
         import torch
+
+        logging.info("Torch version: %s", torch.__version__)
+        logging.info("Torch CUDA build: %s", torch.version.cuda)
+        logging.info("Torch CUDA available: %s", torch.cuda.is_available())
+
+        has_nvidia_gpu = _has_nvidia_gpu()
+        torch_cuda_build = bool(torch.version.cuda)
+        if has_nvidia_gpu and not torch_cuda_build:
+            logging.warning(
+                "NVIDIA GPU detected, but CPU-only torch build is installed"
+            )
+            logging.warning("Attempting to install CUDA torch build automatically...")
+            install_ok, install_error = _install_torch_cuda_build()
+            if install_ok:
+                logging.warning("CUDA torch build installed successfully")
+                logging.warning("Please restart the script to use updated torch build")
+            else:
+                logging.error("Failed to install CUDA torch build automatically")
+                if install_error:
+                    logging.error("Installer output: %s", install_error)
+                logging.error(
+                    "Manual fix: %s -m pip install --upgrade torch torchaudio torchvision --index-url %s",
+                    sys.executable,
+                    CUDA_WHEEL_INDEX,
+                )
+            torch_gpu_install_required = True
 
         cpu_ok = False
         try:
@@ -212,6 +281,7 @@ def run_environment_checks(
         or bool(missing_unique)
         or (not maest_ok)
         or (not checkpoint_path_ok)
+        or torch_gpu_install_required
     )
     if hard_fail:
         logging.error("Environment checks failed")

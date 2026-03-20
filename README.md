@@ -42,6 +42,11 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
+Torch note:
+
+- On systems with NVIDIA GPU, startup checks auto-attempt CUDA torch install (`cu121`) if a CPU-only torch build is detected.
+- After auto-install, rerun `python .\src\main.py` once to continue with the updated environment.
+
 ## CLI usage
 
 Run all stages (default):
