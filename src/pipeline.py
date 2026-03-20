@@ -453,7 +453,8 @@ def load_models(config: Dict[str, Any], script_dir: Path) -> Dict[str, Any]:
             raise RuntimeError("Resolved checkpoint path is empty")
         arch = model_params.get("arch", "discogs-maest-30s-pw-129e-519l")
         model = get_maest(arch, pretrained=False).eval().to(device)
-        state = torch.load(str(ckpt_path), map_location="cpu")
+        logging.info("Model loaded on device: %s", device)
+        state = torch.load(str(ckpt_path), map_location="cpu", weights_only=False)
         if isinstance(state, dict) and "state_dict" in state:
             state = state["state_dict"]
         model.load_state_dict(state, strict=False)

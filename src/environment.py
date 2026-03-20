@@ -136,6 +136,9 @@ def _ensure_torch_runtime(has_nvidia_gpu: bool) -> Tuple[bool, bool]:
                 "NVIDIA GPU detected, but CPU-only torch build is installed"
             )
             logging.warning("Attempting to install CUDA torch build automatically...")
+            logging.warning(
+                "This may take several minutes. No progress messages will appear during download — this is expected."
+            )
             install_ok, install_error = _install_torch_stack(use_cuda=True)
             if not install_ok:
                 logging.error("Failed to install CUDA torch build automatically")
