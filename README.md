@@ -31,6 +31,7 @@ https://github.com/user-attachments/assets/ae40e272-0067-4a59-93cf-8f9d62e8e763
 **Key properties:**
 
 - ⚡ **Incremental** — already-processed tracks are skipped on reruns, only new files are analyzed
+- 🚀 **Fast** — with CUDA, inference takes 0.25–1 second per track, making large libraries practical to process
 - 🛡️ **Non-destructive by default** — existing genre tags are never overwritten unless you explicitly allow it
 - 🖥️ **Cross-platform** — runs on Windows, Linux, WSL; GPU (CUDA) auto-detected and used when available
 - 🎵 **Format-wide** — FLAC, WAV, AIFF, MP3, M4A, DSF, APE, WavPack
