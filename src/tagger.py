@@ -80,7 +80,14 @@ def _set_id3_genre(audio_file: Any, genre_value: str) -> None:
     from mutagen.id3 import TCON
 
     if not hasattr(audio_file, "tags") or not audio_file.tags:
-        audio_file.add_tags()
+        try:
+            audio_file.add_tags()
+        except Exception:
+            pass
+
+    if not audio_file.tags:
+        raise RuntimeError("Unable to create or access ID3 tags")
+
     if "TCON" in audio_file.tags:
         del audio_file.tags["TCON"]
     audio_file.tags.add(TCON(encoding=3, text=[genre_value]))
