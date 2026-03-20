@@ -161,8 +161,7 @@ If pytest tests are added later, run one test with:
 
 - Do not auto-upgrade dependency versions unless requested.
 - Default checkpoint behavior must remain internal:
-  - if `MODEL_FILE_PATH` is empty, use built-in default model logic,
-  - download checkpoint into `src/models` when needed.
+  - if `MODEL_FILE_PATH` is empty, use built-in `maest_infer` pretrained logic.
 - Keep `models/` artifacts out of git.
 
 ## 9) Change safety checklist

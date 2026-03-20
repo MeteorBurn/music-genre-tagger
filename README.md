@@ -107,7 +107,7 @@ Example test values:
 - If `input_directory` is empty and the selected stage needs analysis, the CLI asks for it.
 - If `output_directory` is empty and the selected stage uses analyze flow, the CLI asks for output base path.
 - If user skips output base path, project-relative `meta/` is used.
-- If no custom checkpoint path is provided, checkpoint is downloaded into `src/models/`.
+- If no custom checkpoint path is provided, MAEST pretrained mode is used (managed by `maest_infer`).
 - Meta root name is based on input directory name.
 - Required structure inside meta root:
   - `json/`
@@ -117,7 +117,7 @@ Example test values:
 ## Model config rules
 
 - `MODEL_FILE_PATH` in `src/config.py`:
-  - empty -> default model is used; checkpoint auto-download goes to `src/models/`.
+  - empty -> default model is used through `maest_infer` pretrained mode.
   - set -> pipeline loads your checkpoint file.
 - `MODEL_KEY` in `src/config.py`:
   - used only when `MODEL_FILE_PATH` is set.
