@@ -12,6 +12,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 from typing import Dict
 from typing import List
@@ -588,34 +589,48 @@ def run_analysis_stage(
 
     processed = 0
     errors = 0
+    model_key = str(config.get("maest_result_key", DEFAULT_MODEL_KEY))
     for index, audio_path in enumerate(files_to_process, start=1):
+        started_at = perf_counter()
         try:
             result = analyze_audio_file(audio_path, models, config, json_dir)
+            elapsed_seconds = perf_counter() - started_at
             if result.get("error"):
                 errors += 1
                 logging.error(
-                    "[%d/%d] Analyze error: %s - %s",
+                    "[%d/%d] Analyze error: %s - %s (time: %.2fs)",
                     index,
                     len(files_to_process),
                     audio_path.name,
                     result.get("error"),
+                    elapsed_seconds,
                 )
             else:
                 processed += 1
+                labels = (
+                    result.get("analysis_results", {})
+                    .get(model_key, {})
+                    .get("labels", [])
+                )
+                genres_text = ", ".join(labels) if labels else "n/a"
                 logging.info(
-                    "[%d/%d] Analyzed: %s",
+                    "[%d/%d] Analyzed: %s [%s] (time: %.2fs)",
                     index,
                     len(files_to_process),
                     audio_path.name,
+                    genres_text,
+                    elapsed_seconds,
                 )
         except Exception as exc:
             errors += 1
+            elapsed_seconds = perf_counter() - started_at
             logging.error(
-                "[%d/%d] Analyze exception: %s - %s",
+                "[%d/%d] Analyze exception: %s - %s (time: %.2fs)",
                 index,
                 len(files_to_process),
                 audio_path.name,
                 exc,
+                elapsed_seconds,
             )
             logging.debug(traceback.format_exc())
 
