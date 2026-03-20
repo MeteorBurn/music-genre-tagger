@@ -11,18 +11,29 @@ INPUT_DIRECTORY = ""  # Music library path
 OUTPUT_DIRECTORY = ""  # Metadata base path
 
 # Runtime
-LOG_LEVEL = "INFO"  # DEBUG|INFO|WARNING|ERROR|CRITICAL
 FILE_PATTERN = ""  # Filename substring filter, empty = all
 MAX_FILES = 0  # 0 = no limit
-CONVERT_TO_WAV = False  # Convert non-WAV before analysis
-FFMPEG_PATH = "ffmpeg"  # ffmpeg executable
+AUDIO_EXTENSIONS = [
+    ".flac",
+    ".wav",
+    ".aiff",
+    ".aif",
+    ".m4a",
+    ".dsf",
+    ".ape",
+    ".wv",
+    ".mp3",
+]  # Formats included in analysis; remove an extension to exclude that format
 
 # Analysis
 AUDIO_OFFSET = 60  # Segment start in seconds
 AUDIO_DURATION = 30  # Segment length in seconds
 SAMPLE_RATE = 16000  # Target sample rate
 NUM_GENRES = 3  # Top-N genres per track
-AUDIO_EXTENSIONS = [".flac", ".wav", ".aiff", ".aif", ".m4a", ".dsf", ".ape", ".wv", ".mp3"]  # Formats included in analysis; remove an extension to exclude that format
+
+# Utils
+CONVERT_TO_WAV = False  # Convert non-WAV before analysis
+FFMPEG_PATH = "ffmpeg"  # ffmpeg executable
 
 # Model
 MODEL_FILE_PATH = ""  # Optional custom checkpoint file path
@@ -33,21 +44,23 @@ OVERWRITE_EXISTING = False  # Keep existing tags
 GENRE_SEPARATOR = "; "  # Separator in written tag
 MAX_TAG_GENRES = 3  # Max genres written to tag
 
+# Logs
+LOG_LEVEL = "INFO"  # DEBUG|INFO|WARNING|ERROR|CRITICAL
+
 
 def get_config() -> Dict[str, Any]:
     return {
-        "loglevel": LOG_LEVEL,
         "input_directory": INPUT_DIRECTORY,
         "output_directory": OUTPUT_DIRECTORY,
         "file_pattern": FILE_PATTERN,
         "max_files": MAX_FILES,
-        "convert_to_wav": CONVERT_TO_WAV,
-        "ffmpeg_path": FFMPEG_PATH,
+        "audio_extensions": AUDIO_EXTENSIONS,
         "audio_offset": AUDIO_OFFSET,
         "audio_duration": AUDIO_DURATION,
         "sample_rate": SAMPLE_RATE,
-        "audio_extensions": AUDIO_EXTENSIONS,
         "num_genres": NUM_GENRES,
+        "convert_to_wav": CONVERT_TO_WAV,
+        "ffmpeg_path": FFMPEG_PATH,
         "model_file_path": MODEL_FILE_PATH,
         "model_key": MODEL_KEY,
         "tagger": {
@@ -59,4 +72,5 @@ def get_config() -> Dict[str, Any]:
             "overwrite_existing": OVERWRITE_EXISTING,
             "max_rows": None,
         },
+        "loglevel": LOG_LEVEL,
     }
