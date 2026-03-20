@@ -690,19 +690,34 @@ def run_tag_stage(config: Dict[str, Any], excel_path: Path) -> Dict[str, int]:
     return run_genre_tagging(excel_path, config["tagger"])
 
 
-def should_run_tag_stage(stage: str, tag_mode: str, non_interactive: bool) -> bool:
+def _prompt_overwrite() -> bool:
+    answer = input("Overwrite existing genre tags? [y/N]: ").strip().lower()
+    return answer in ["y", "yes"]
+
+
+def should_run_tag_stage(
+    stage: str,
+    tag_mode: str,
+    non_interactive: bool,
+    config: Dict[str, Any],
+) -> bool:
     if stage == "tag":
         return True
     if stage != "all":
         return False
     if tag_mode == "yes":
+        if not non_interactive:
+            config["tagger"]["overwrite_existing"] = _prompt_overwrite()
         return True
     if tag_mode == "no":
         return False
     if non_interactive:
         return False
     answer = input("Run tagging stage now? [y/N]: ").strip().lower()
-    return answer in ["y", "yes"]
+    if answer not in ["y", "yes"]:
+        return False
+    config["tagger"]["overwrite_existing"] = _prompt_overwrite()
+    return True
 
 
 def write_markdown_report(
@@ -796,7 +811,9 @@ def run_pipeline(
                 config, runtime_paths.json_dir, runtime_paths.excel_path
             )
 
-        if should_run_tag_stage(stage, config.get("tag_mode", "ask"), non_interactive):
+        if should_run_tag_stage(
+            stage, config.get("tag_mode", "ask"), non_interactive, config
+        ):
             tag_stats = run_tag_stage(config, runtime_paths.excel_path)
 
         success = True
