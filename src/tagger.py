@@ -261,21 +261,43 @@ def run_genre_tagging(excel_path: Path, config: Dict[str, Any]) -> Dict[str, int
         dataframe = dataframe.head(config["max_rows"]).copy()
 
     results = {"success": 0, "skipped": 0, "error": 0, "already_processed": 0}
+    total = len(dataframe)
 
     for index, row in dataframe.iterrows():
+        file_path_raw = str(row[config["file_path_field"]])
+        track_name = Path(file_path_raw).name
+
         current_status = row.get(status_field, "")
         if current_status == "success":
             results["already_processed"] += 1
+            logging.info("[%d/%d] Already tagged: %s", index + 1, total, track_name)
             continue
 
         process_result = _process_audio_file(
-            row[config["file_path_field"]],
+            file_path_raw,
             row[config["genre_source_field"]],
             config,
         )
         mapped_status = _map_status(process_result)
         dataframe.at[index, status_field] = mapped_status
         results[mapped_status] += 1
+
+        if process_result == "success":
+            logging.info("[%d/%d] Tagged: %s", index + 1, total, track_name)
+        elif process_result == "skipped_existing":
+            logging.info(
+                "[%d/%d] Skipped (tag exists): %s", index + 1, total, track_name
+            )
+        elif process_result == "empty_genre":
+            logging.warning(
+                "[%d/%d] Skipped (no genre data): %s", index + 1, total, track_name
+            )
+        elif process_result == "file_not_found":
+            logging.error("[%d/%d] File not found: %s", index + 1, total, file_path_raw)
+        else:
+            logging.error(
+                "[%d/%d] Failed (%s): %s", index + 1, total, process_result, track_name
+            )
 
     dataframe.to_excel(excel_path, index=False)
     auto_adjust_excel_columns(excel_path)
