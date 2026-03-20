@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import importlib
+import json
 import logging
 import platform
 import re
@@ -74,6 +75,8 @@ def _install_torch_stack(use_cuda: bool) -> Tuple[bool, str]:
         "pip",
         "install",
         "--upgrade",
+        "--force-reinstall",
+        "--no-cache-dir",
         "torch",
         "torchaudio",
         "torchvision",
@@ -88,6 +91,38 @@ def _install_torch_stack(use_cuda: bool) -> Tuple[bool, str]:
         return False, error_text
     except Exception as exc:
         return False, str(exc)
+
+
+def _probe_torch_info() -> Tuple[bool, str, str, bool]:
+    probe_code = (
+        "import json\n"
+        "try:\n"
+        " import torch\n"
+        " print(json.dumps({'ok': True, 'version': str(torch.__version__), 'cuda_build': str(torch.version.cuda), 'cuda_available': bool(torch.cuda.is_available())}))\n"
+        "except Exception as exc:\n"
+        " print(json.dumps({'ok': False, 'error': str(exc)}))\n"
+    )
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-c", probe_code],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        raw = (completed.stdout or "").strip()
+        if not raw:
+            return False, "", "", False
+        data = json.loads(raw)
+        if not data.get("ok"):
+            return False, "", "", False
+        return (
+            True,
+            str(data.get("version", "")),
+            str(data.get("cuda_build", "")),
+            bool(data.get("cuda_available", False)),
+        )
+    except Exception:
+        return False, "", "", False
 
 
 def _ensure_torch_runtime(has_nvidia_gpu: bool) -> Tuple[bool, bool]:
@@ -112,7 +147,21 @@ def _ensure_torch_runtime(has_nvidia_gpu: bool) -> Tuple[bool, bool]:
                     CUDA_WHEEL_INDEX,
                 )
                 return False, False
-            logging.warning("CUDA torch build installed successfully")
+            probe_ok, version, cuda_build, _ = _probe_torch_info()
+            if not probe_ok or not cuda_build or cuda_build == "None":
+                logging.error("CUDA torch build verification failed after installation")
+                logging.error(
+                    "Manual fix: %s -m pip uninstall -y torch torchaudio torchvision",
+                    sys.executable,
+                )
+                logging.error(
+                    "Manual fix: %s -m pip install --upgrade --force-reinstall --no-cache-dir torch torchaudio torchvision --index-url %s",
+                    sys.executable,
+                    CUDA_WHEEL_INDEX,
+                )
+                return False, False
+            logging.warning("CUDA torch build installed successfully: %s", version)
+            logging.warning("Detected CUDA build: %s", cuda_build)
             logging.warning("Please restart the script to use updated torch build")
             restart_required = True
     except Exception:
