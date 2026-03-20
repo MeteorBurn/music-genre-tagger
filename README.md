@@ -1,29 +1,83 @@
-# 🎵 PyTorch MAEST Tagger
+# 🎵 Music Genre Tagger
 
-> Automatic genre detection and metadata tagging for music libraries using the MAEST deep learning model.
+> Automatically detect and tag music genres in large audio libraries using the **MAEST** deep learning model — trained on millions of tracks from the Discogs database.
+
+No more manual tagging. Point it at your music folder, and every track gets its genre written directly into the file metadata — ready for Rekordbox, Traktor, Serato, or any music player.
+
+---
+
+## 🎯 Who is this for?
+
+| Audience | Why it helps |
+|----------|-------------|
+| 🎧 **DJs** | Auto-tag your entire library so Rekordbox / Traktor / Serato can filter by genre |
+| 📦 **Music archivists** | Bring structure to thousands of untagged FLAC/WAV files in one run |
+| 🔬 **Researchers** | Get structured genre metadata (Excel + JSON) across large collections |
+| 💻 **Developers** | Working example of end-to-end audio ML inference with metadata writing |
 
 ---
 
 ## 🧠 What this project does
 
-This pipeline analyzes your music library, detects genres for each track using the **MAEST** model (PyTorch), exports results to Excel, and optionally writes genre tags directly into audio files.
+**Music Genre Tagger** is an automated ML pipeline that:
 
-**Why this is useful:**
+- 🔍 **Analyzes** each track with the [MAEST](https://github.com/palonso/MAEST) transformer model (trained on Discogs) and predicts the top-N genres with confidence scores
+- 📊 **Aggregates** all results into `tracks_genres.xlsx` — with genre names, confidence scores, and a broken-beat flag for DJ-friendly rhythm filtering
+- 🏷️ **Writes** genres directly into audio file metadata — ID3 for MP3/WAV, Vorbis comments for FLAC, MP4 tags, and APE tags
+- 📝 **Generates** a `report.md` summary after every run
 
-- ⏱️ Saves hours of manual genre tagging for large libraries
-- 🎯 Consistent genre predictions from the same model across all tracks
-- 📊 Creates structured metadata (`json`, `tracks_genres.xlsx`, `report.md`) easy to review
-- 🎧 Writes genres into audio tags so DJ software and music players can filter by genre
-- 🔄 Supports incremental reruns — only new tracks are analyzed on next run
+**Key properties:**
+
+- ⚡ **Incremental** — already-processed tracks are skipped on reruns, only new files are analyzed
+- 🛡️ **Non-destructive by default** — existing genre tags are never overwritten unless you explicitly allow it
+- 🖥️ **Cross-platform** — runs on Windows, Linux, WSL; GPU (CUDA) auto-detected and used when available
+- 🎵 **Format-wide** — FLAC, WAV, AIFF, MP3, M4A, DSF, APE, WavPack
+
+---
+
+## ⚙️ How it works
+
+```
+Your Music Library
+       │
+       ▼
+┌─────────────────────────────────────────────────────┐
+│  ANALYZE                                            │
+│  For each unprocessed track:                        │
+│  • Convert to 16kHz mono (ffmpeg if needed)         │
+│  • Trim to analysis window (default: 60s–90s)       │
+│  • Run MAEST inference → top-N genres + confidence  │
+│  • Save result to per-track JSON                    │
+└───────────────────────┬─────────────────────────────┘
+                        │
+                        ▼
+┌─────────────────────────────────────────────────────┐
+│  EXCEL                                              │
+│  • Read all JSON files                              │
+│  • Deduplicate against existing rows                │
+│  • Write / update  tracks_genres.xlsx               │
+└───────────────────────┬─────────────────────────────┘
+                        │
+                        ▼
+┌─────────────────────────────────────────────────────┐
+│  TAG  (optional)                                    │
+│  • Read tracks_genres.xlsx                          │
+│  • Write genre string into audio file metadata      │
+│  • Update status column (incremental-safe)          │
+└─────────────────────────────────────────────────────┘
+                        │
+                        ▼
+                   report.md
+```
 
 ---
 
 ## 🗂️ Project structure
 
 ```
-project/
+music-genre-tagger/
 ├── src/
-│   ├── main.py          # Entrypoint
+│   ├── main.py          # Entrypoint & CLI
 │   ├── pipeline.py      # Core flow orchestration
 │   ├── environment.py   # Environment and dependency checks
 │   ├── extractor.py     # JSON → Excel extraction
@@ -42,14 +96,14 @@ project/
 
 ```powershell
 # Windows (PowerShell)
-cd path\to\project
+cd path\to\music-genre-tagger
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
 ```bash
 # Linux / WSL / macOS
-cd path/to/project
+cd path/to/music-genre-tagger
 python -m venv .venv
 source .venv/bin/activate
 ```
@@ -61,7 +115,7 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-> 🚀 **GPU note:** On first run, startup automatically detects your NVIDIA GPU and installs a matching CUDA torch build (`cu121`). After install, rerun `python src/main.py` once to continue with updated packages.
+> 🚀 **GPU note:** On first run, the pipeline automatically detects your NVIDIA GPU and installs a matching CUDA torch build (`cu121`). After install, rerun `python src/main.py` once to continue with updated packages.
 
 ---
 
@@ -74,40 +128,26 @@ python src/main.py
 The pipeline will:
 1. Check environment and dependencies
 2. Ask for input/output paths if not set in `config.py`
-3. Analyze all audio tracks → write JSON files
+3. Analyze all audio tracks → write per-track JSON files
 4. Aggregate JSON into `tracks_genres.xlsx`
-5. Optionally write genres into audio tags
+5. Optionally write genres into audio file tags
 6. Generate `report.md`
-
----
-
-## 🔁 Pipeline flow
-
-| Stage | What it does |
-|-------|-------------|
-| **Environment** | Checks Python, dependencies, GPU/CPU, model checkpoint |
-| **Analyze** | Scans audio files, runs MAEST inference, writes per-track JSON |
-| **Excel** | Aggregates JSON files into `tracks_genres.xlsx` with deduplication |
-| **Tag** | Reads Excel and writes genres into audio file metadata tags |
-| **Report** | Generates `report.md` summary in the metadata folder |
 
 ---
 
 ## 📁 Output structure
 
-For each music library, metadata is stored in a dedicated folder:
-
 ```
 <output_directory>/
 └── <music_folder_name>/
     ├── json/
-    │   ├── track_name__hash.json
+    │   ├── track_name__hash.json   ← per-track inference result
     │   └── ...
-    ├── tracks_genres.xlsx
-    └── report.md
+    ├── tracks_genres.xlsx          ← aggregated genre table
+    └── report.md                   ← run summary
 ```
 
-> If `output_directory` is not set, project root is used as base.
+> If `output_directory` is not set, the project root is used as the base.
 
 ---
 
@@ -122,21 +162,24 @@ OUTPUT_DIRECTORY = ""  # Path to metadata output folder
 
 # Analysis
 NUM_GENRES = 3         # Top-N genres per track
+AUDIO_OFFSET = 60      # Start of analysis window (seconds)
+AUDIO_DURATION = 30    # Length of analysis window (seconds)
 AUDIO_EXTENSIONS = [".flac", ".wav", ".aiff", ".aif", ".m4a", ".dsf", ".ape", ".wv", ".mp3"]
 
 # Model
-MODEL_FILE_PATH = ""   # Custom checkpoint path (optional)
+MODEL_FILE_PATH = ""   # Custom checkpoint path (optional, auto-downloaded if empty)
 MODEL_KEY = ""         # Custom result key (used only with MODEL_FILE_PATH)
 
 # Tagging
-OVERWRITE_EXISTING = False  # Keep existing genre tags
+OVERWRITE_EXISTING = False  # Keep existing genre tags (safe default)
 MAX_TAG_GENRES = 3          # Max genres written to tags
+GENRE_SEPARATOR = "; "      # Separator between genres in the tag string
 ```
 
 **Model rules:**
-- `MODEL_FILE_PATH` empty → default checkpoint auto-downloaded to `src/models/`
-- `MODEL_FILE_PATH` set → your checkpoint is used
-- `MODEL_KEY` is only used with a custom `MODEL_FILE_PATH`
+- `MODEL_FILE_PATH` empty → default MAEST checkpoint auto-downloaded to `src/models/`
+- `MODEL_FILE_PATH` set → your checkpoint is used instead
+- `MODEL_KEY` is only relevant when using a custom `MODEL_FILE_PATH`
 
 ---
 
@@ -148,15 +191,15 @@ python src/main.py [options]
 
 | Option | Description |
 |--------|-------------|
-| `--stage all\|analyze\|excel\|tag` | Pipeline scope (default: `all`) |
-| `--input-directory <path>` | Source music library path |
-| `--output-directory <path>` | Metadata output base path |
+| `--stage all\|analyze\|excel\|tag` | Run the full pipeline or a single stage (default: `all`) |
+| `--input-directory <path>` | Path to source music library |
+| `--output-directory <path>` | Path for metadata output |
 | `--file-pattern <text>` | Filter filenames by substring |
-| `--max-files <N>` | Limit tracks analyzed (test mode) |
+| `--max-files <N>` | Limit number of tracks analyzed (useful for testing) |
 | `--convert-to-wav` | Force WAV conversion before inference |
-| `--tag-yes` | Auto-confirm tagging without prompt |
-| `--tag-no` | Auto-skip tagging without prompt |
-| `--non-interactive` | Disable all prompts |
+| `--tag-yes` | Auto-confirm genre tagging without prompt |
+| `--tag-no` | Auto-skip genre tagging without prompt |
+| `--non-interactive` | Disable all prompts (for CI/automation) |
 | `--loglevel <level>` | Verbosity: `DEBUG\|INFO\|WARNING\|ERROR\|CRITICAL` |
 
 **Example commands:**
@@ -168,10 +211,10 @@ python src/main.py --input-directory "path/to/music" --output-directory "path/to
 # Analyze only first 5 tracks (smoke test)
 python src/main.py --stage analyze --input-directory "path/to/music" --max-files 5
 
-# Rebuild Excel from existing JSON
+# Rebuild Excel from existing JSON without re-running inference
 python src/main.py --stage excel --input-directory "path/to/music" --output-directory "path/to/meta"
 
-# Tag only (after Excel is ready)
+# Write tags only (after Excel is ready)
 python src/main.py --stage tag --input-directory "path/to/music" --output-directory "path/to/meta"
 
 # Non-interactive CI mode, skip tagging
@@ -182,26 +225,15 @@ python src/main.py --non-interactive --tag-no --input-directory "path/to/music"
 
 ## 🎵 Supported audio formats
 
-| Format | Notes |
-|--------|-------|
-| `.flac` | Direct |
-| `.wav` | Direct |
-| `.aiff` / `.aif` | Direct |
-| `.mp3` | Direct |
-| `.m4a` | Via ffmpeg |
-| `.dsf` | Via ffmpeg |
-| `.ape` | Via ffmpeg |
-| `.wv` | Via ffmpeg |
+| Format | Read via | Tag format written |
+|--------|----------|--------------------|
+| `.flac` | Direct | Vorbis comment |
+| `.wav` | Direct | ID3 |
+| `.aiff` / `.aif` | Direct | ID3 |
+| `.mp3` | Direct | ID3 |
+| `.m4a` | ffmpeg | MP4 (`©gen`) |
+| `.dsf` | ffmpeg | ID3 |
+| `.ape` | ffmpeg | APE tag |
+| `.wv` | ffmpeg | APE tag |
 
-> ⚠️ Formats marked **Via ffmpeg** require `ffmpeg` in your system PATH. If unavailable, those tracks are skipped with a per-file error while the pipeline continues.
-
----
-
-## 🔒 Invariants
-
-The following behaviors are preserved and must not be changed:
-
-- MAEST result key: `maest_519l_pytorch`
-- Label cleanup: `A---B → B`
-- Extractor fields: `file_path`, `file_name`, `genres_maest`, `confidences`, `is_broken_beat`, `model_key`
-- Tag safety default: `overwrite_existing = False`
+> ⚠️ Formats requiring **ffmpeg** need `ffmpeg` available in your system PATH. If unavailable, those tracks are skipped with a per-file error while the rest of the pipeline continues normally.
