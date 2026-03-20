@@ -15,7 +15,7 @@ __pycache__/
 .ruff_cache/
 
 # Local model storage (downloaded at runtime)
-src/models/
+models/
 
 # Generated data/artifacts
 *.xlsx
