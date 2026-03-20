@@ -47,6 +47,7 @@ Torch note:
 - `requirements.txt` includes `torch` and `torchaudio` baseline dependencies.
 - At startup, environment checks detect NVIDIA GPU and install a matching torch stack automatically.
 - On NVIDIA systems, CUDA build install command uses `--index-url https://download.pytorch.org/whl/cu121`.
+- Startup uses force-reinstall/no-cache for torch stack updates to avoid stale CPU wheel reuse.
 - If torch stack is installed/updated, rerun `python .\src\main.py` once to continue with updated packages.
 
 ## CLI usage
@@ -114,6 +115,7 @@ Example test values:
 - If `input_directory` is empty and the selected stage needs analysis, the CLI asks for it.
 - If `output_directory` is empty and the selected stage uses analyze flow, the CLI asks for output base path.
 - If user skips output base path, project root is used as output base.
+- With `--non-interactive` and empty `output_directory`, project root is used as output base.
 - If no custom checkpoint path is provided, MAEST pretrained mode is used (managed by `maest_infer`).
 - Meta root name is based on input directory name.
 - Required structure inside meta root:
@@ -135,6 +137,7 @@ Example test values:
 - `AUDIO_EXTENSIONS` in `src/config.py` controls which file extensions are included in analysis.
 - Removing an extension from `AUDIO_EXTENSIONS` excludes that format from analysis.
 - Some formats require ffmpeg conversion before inference; if ffmpeg is unavailable, those files are skipped with per-file errors while pipeline continues.
+- Analyze-stage logs include per-track genres and elapsed time: `Analyzed: <file> [genre1, genre2, ...] (time: X.XXs)`.
 
 ## Invariants preserved
 

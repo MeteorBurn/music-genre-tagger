@@ -59,6 +59,11 @@ Useful overrides:
 - `--tag-yes` / `--tag-no`
 - `--non-interactive`
 
+Path fallback behavior:
+
+- If `output_directory` is empty and user skips prompt, project root is used as output base.
+- In `--non-interactive` mode with empty `output_directory`, project root is also used as output base.
+
 ## 5) Build, lint, and test commands
 
 There is no package build step and no committed linter/formatter config.
@@ -160,6 +165,11 @@ If pytest tests are added later, run one test with:
 ## 8) Dependency and model policy
 
 - Do not auto-upgrade dependency versions unless requested.
+- `requirements.txt` includes baseline `torch` and `torchaudio` dependencies.
+- Startup environment checks may adapt torch installation to system capabilities:
+  - on NVIDIA systems, script auto-attempts CUDA torch stack install (`cu121` index),
+  - uses force-reinstall/no-cache to avoid stale CPU wheel reuse,
+  - requires one rerun after successful torch stack update.
 - Default checkpoint behavior must remain internal:
   - if `MODEL_FILE_PATH` is empty, use built-in `maest_infer` pretrained logic.
 - Keep `models/` artifacts out of git.
@@ -174,3 +184,4 @@ Before handing off:
 4. If extractor changed, verify expected Excel columns and dedupe by `file_path`.
 5. If tagger changed, verify status updates and no overwrite when existing genre is present.
 6. Ensure docs/examples remain generic (no local machine paths).
+7. If environment logic changed, verify torch detection/install flow and rerun behavior.
