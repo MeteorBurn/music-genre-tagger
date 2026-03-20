@@ -21,7 +21,7 @@ No more manual tagging. Point it at your music folder, and every track gets its 
 
 **Music Genre Tagger** is an automated ML pipeline that:
 
-- 🔍 **Analyzes** each track with the [MAEST](https://github.com/palonso/MAEST) transformer model (trained on Discogs) and predicts the top-N genres with confidence scores
+- 🔍 **Analyzes** each track with the [MAEST](https://github.com/palonso/MAEST) transformer model (trained on Discogs) and predicts the top-N genres with confidence scores — inference is powered by [maest-infer](https://github.com/openmirlab/maest-infer), a lightweight PyTorch-native repackaging of MAEST
 - 📊 **Aggregates** all results into `tracks_genres.xlsx` — with genre names, confidence scores, and a broken-beat flag for DJ-friendly rhythm filtering
 - 🏷️ **Writes** genres directly into audio file metadata — ID3 for MP3/WAV, Vorbis comments for FLAC, MP4 tags, and APE tags
 - 📝 **Generates** a `report.md` summary after every run
@@ -237,3 +237,13 @@ python src/main.py --non-interactive --tag-no --input-directory "path/to/music"
 | `.wv` | ffmpeg | APE tag |
 
 > ⚠️ Formats requiring **ffmpeg** need `ffmpeg` available in your system PATH. If unavailable, those tracks are skipped with a per-file error while the rest of the pipeline continues normally.
+
+---
+
+## 🙏 Credits
+
+This project is built on top of the MAEST model and ecosystem:
+
+- **[MAEST](https://github.com/palonso/MAEST)** — Music Audio Efficient Spectrogram Transformer, the original research model by Pablo Alonso-Jiménez and colleagues at the Music Technology Group (MTG), Universitat Pompeu Fabra. Trained on the Discogs dataset for multi-label music genre classification.
+
+- **[maest-infer](https://github.com/openmirlab/maest-infer)** — A lightweight, dependency-minimal repackaging of MAEST focused solely on inference, with native PyTorch and torchaudio support. This is the package used directly by Music Genre Tagger.
