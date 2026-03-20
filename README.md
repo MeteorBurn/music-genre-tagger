@@ -44,7 +44,7 @@ pip install -r requirements.txt
 
 Torch note:
 
-- `requirements.txt` intentionally excludes direct torch/torchaudio pins.
+- `requirements.txt` includes `torch` and `torchaudio` baseline dependencies.
 - At startup, environment checks detect NVIDIA GPU and install a matching torch stack automatically.
 - On NVIDIA systems, CUDA build install command uses `--index-url https://download.pytorch.org/whl/cu121`.
 - If torch stack is installed/updated, rerun `python .\src\main.py` once to continue with updated packages.
