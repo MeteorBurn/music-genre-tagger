@@ -12,6 +12,7 @@ from mutagen import File
 from mutagen.aiff import AIFF
 from mutagen.flac import FLAC
 from mutagen.mp3 import MP3
+from mutagen.mp4 import MP4
 from mutagen.wave import WAVE
 
 
@@ -40,82 +41,97 @@ def convert_path_for_current_env(file_path: str) -> str:
     return file_path
 
 
-def get_existing_genre(audio_file: Any):
+def _extract_text_tag_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            text = _extract_text_tag_value(item)
+            if text:
+                return text
+        return ""
+    text = str(value).strip()
+    return text
+
+
+def _is_mp4_like(audio_file: Any, file_extension: str) -> bool:
+    return isinstance(audio_file, MP4) or file_extension in {".m4a", ".alac"}
+
+
+def _read_first_existing_genre(audio_file: Any, keys: list[str]) -> str:
+    for key in keys:
+        value = None
+        if hasattr(audio_file, "tags") and audio_file.tags:
+            value = audio_file.tags.get(key)
+        if value is None and hasattr(audio_file, "get"):
+            try:
+                value = audio_file.get(key)
+            except Exception:
+                value = None
+        text = _extract_text_tag_value(value)
+        if text:
+            return text
+    return ""
+
+
+def _set_id3_genre(audio_file: Any, genre_value: str) -> None:
+    from mutagen.id3 import TCON
+
+    if not hasattr(audio_file, "tags") or not audio_file.tags:
+        audio_file.add_tags()
+    if "TCON" in audio_file.tags:
+        del audio_file.tags["TCON"]
+    audio_file.tags.add(TCON(encoding=3, text=[genre_value]))
+
+
+def get_existing_genre(audio_file: Any, file_extension: str):
     try:
-        if isinstance(audio_file, WAVE):
-            if hasattr(audio_file, "tags") and audio_file.tags:
-                if "TCON" in audio_file.tags:
-                    return str(audio_file.tags["TCON"])
-                ignr = audio_file.tags.get("IGNR")
-                return ignr[0] if ignr else None
-        elif isinstance(audio_file, MP3):
-            if (
-                hasattr(audio_file, "tags")
-                and audio_file.tags
-                and "TCON" in audio_file.tags
-            ):
-                return str(audio_file.tags["TCON"])
-        elif isinstance(audio_file, AIFF):
-            if hasattr(audio_file, "tags") and audio_file.tags:
-                if "TCON" in audio_file.tags:
-                    return str(audio_file.tags["TCON"])
-                return (
-                    audio_file.tags.get("GENRE", [None])[0]
-                    if "GENRE" in audio_file.tags
-                    else None
-                )
-        elif isinstance(audio_file, FLAC):
-            return (
-                audio_file.get("GENRE", [None])[0] if audio_file.get("GENRE") else None
+        if _is_mp4_like(audio_file, file_extension):
+            genre = _read_first_existing_genre(
+                audio_file, ["\xa9gen", "GENRE", "Genre"]
             )
-        else:
-            if hasattr(audio_file, "tags") and audio_file.tags:
-                if "TCON" in audio_file.tags:
-                    return str(audio_file.tags["TCON"])
-                return (
-                    audio_file.get("GENRE", [None])[0]
-                    if audio_file.get("GENRE")
-                    else None
-                )
+            return genre or None
+        elif isinstance(audio_file, FLAC):
+            genre = _read_first_existing_genre(audio_file, ["GENRE", "Genre"])
+            return genre or None
+
+        genre = _read_first_existing_genre(
+            audio_file,
+            ["TCON", "IGNR", "GENRE", "Genre", "\xa9gen"],
+        )
+        return genre or None
     except Exception:
         return None
-    return None
 
 
-def set_genre_tag(audio_file: Any, genre_value: str) -> bool:
+def set_genre_tag(audio_file: Any, genre_value: str, file_extension: str) -> bool:
     try:
-        if isinstance(audio_file, WAVE):
-            if not hasattr(audio_file, "tags") or not audio_file.tags:
-                audio_file.add_tags()
-            if hasattr(audio_file.tags, "add"):
-                from mutagen.id3 import TCON
-
-                if "TCON" in audio_file.tags:
-                    del audio_file.tags["TCON"]
-                audio_file.tags.add(TCON(encoding=3, text=[genre_value]))
-            else:
-                audio_file.tags["IGNR"] = genre_value
-        elif isinstance(audio_file, MP3):
-            if not hasattr(audio_file, "tags") or not audio_file.tags:
-                audio_file.add_tags()
-            from mutagen.id3 import TCON
-
-            if "TCON" in audio_file.tags:
-                del audio_file.tags["TCON"]
-            audio_file.tags.add(TCON(encoding=3, text=[genre_value]))
+        if _is_mp4_like(audio_file, file_extension):
+            audio_file["\xa9gen"] = [genre_value]
+        elif isinstance(audio_file, (MP3, WAVE, AIFF)) or file_extension in {
+            ".mp3",
+            ".wav",
+            ".aif",
+            ".aiff",
+            ".dsf",
+            ".dff",
+        }:
+            _set_id3_genre(audio_file, genre_value)
         elif isinstance(audio_file, FLAC):
             audio_file["GENRE"] = genre_value
+        elif file_extension in {".ape", ".wv"}:
+            if not hasattr(audio_file, "tags") or not audio_file.tags:
+                audio_file.add_tags()
+            audio_file["Genre"] = genre_value
         else:
             if not hasattr(audio_file, "tags") or not audio_file.tags:
                 audio_file.add_tags()
             if hasattr(audio_file.tags, "add"):
-                from mutagen.id3 import TCON
-
-                if "TCON" in audio_file.tags:
-                    del audio_file.tags["TCON"]
-                audio_file.tags.add(TCON(encoding=3, text=[genre_value]))
+                _set_id3_genre(audio_file, genre_value)
             else:
-                audio_file["GENRE"] = genre_value
+                audio_file["Genre"] = genre_value
         return True
     except Exception as exc:
         logging.error("Error setting genre tag: %s", exc)
@@ -142,6 +158,7 @@ def _map_status(result: str) -> str:
 def _process_audio_file(file_path: Any, genre_data: Any, config: Dict[str, Any]) -> str:
     normalized_path = convert_path_for_current_env(str(file_path))
     path_obj = Path(normalized_path)
+    file_extension = path_obj.suffix.lower()
     if not path_obj.exists():
         return "file_not_found"
 
@@ -153,7 +170,7 @@ def _process_audio_file(file_path: Any, genre_data: Any, config: Dict[str, Any])
         logging.error("Error loading %s: %s", normalized_path, exc)
         return "load_error"
 
-    existing_genre = get_existing_genre(audio_file)
+    existing_genre = get_existing_genre(audio_file, file_extension)
     if existing_genre and not config["overwrite_existing"]:
         return "skipped_existing"
 
@@ -165,7 +182,7 @@ def _process_audio_file(file_path: Any, genre_data: Any, config: Dict[str, Any])
     if not genre_string:
         return "empty_genre"
 
-    if set_genre_tag(audio_file, genre_string):
+    if set_genre_tag(audio_file, genre_string, file_extension):
         try:
             audio_file.save()
             return "success"
