@@ -113,7 +113,7 @@ Example test values:
 
 - If `input_directory` is empty and the selected stage needs analysis, the CLI asks for it.
 - If `output_directory` is empty and the selected stage uses analyze flow, the CLI asks for output base path.
-- If user skips output base path, project-relative `meta/` is used.
+- If user skips output base path, project root is used as output base.
 - If no custom checkpoint path is provided, MAEST pretrained mode is used (managed by `maest_infer`).
 - Meta root name is based on input directory name.
 - Required structure inside meta root:

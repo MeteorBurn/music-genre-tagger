@@ -191,14 +191,14 @@ def _determine_output_base(
     path_value = configured
     if uses_meta and not path_value:
         if non_interactive:
-            return script_dir / "meta"
+            return script_dir
         answer = _prompt_for_path(
-            "Output base directory (empty to use project relative meta): ",
+            "Output base directory (empty to use project root): ",
             allow_empty=True,
         )
         path_value = answer
         if not path_value:
-            return script_dir / "meta"
+            return script_dir
 
     if not path_value:
         return None
