@@ -4,6 +4,8 @@
 
 No more manual tagging. Point it at your music folder, and every track gets its genre written directly into the file metadata — ready for Rekordbox, Traktor, Serato, or any music player.
 
+https://github.com/user-attachments/assets/ae40e272-0067-4a59-93cf-8f9d62e8e763
+
 ---
 
 ## 🎯 Who is this for?
