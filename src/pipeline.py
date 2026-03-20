@@ -34,7 +34,19 @@ except ImportError:
     get_maest = None
 
 
-AUDIO_EXTENSIONS = [".wav", ".mp3", ".flac", ".ogg", ".aiff", ".aif", ".m4a"]
+DEFAULT_AUDIO_EXTENSIONS = [
+    ".flac",
+    ".wav",
+    ".aiff",
+    ".aif",
+    ".alac",
+    ".m4a",
+    ".dsf",
+    ".dff",
+    ".ape",
+    ".wv",
+    ".mp3",
+]
 
 DEFAULT_MODELS_DIR = "src/models"
 DEFAULT_MODEL_KEY = "maest_519l_pytorch"
@@ -233,12 +245,21 @@ def build_runtime_paths(
     )
 
 
-def find_audio_files(directory: Path, file_pattern: str = "") -> List[Path]:
+def find_audio_files(
+    directory: Path,
+    file_pattern: str = "",
+    audio_extensions: Optional[List[str]] = None,
+) -> List[Path]:
     audio_files: List[Path] = []
     pattern_lower = file_pattern.lower() if file_pattern else None
+    extension_set = {
+        str(ext).strip().lower()
+        for ext in (audio_extensions or DEFAULT_AUDIO_EXTENSIONS)
+        if str(ext).strip()
+    }
 
     for item in directory.rglob("*"):
-        if item.is_file() and item.suffix.lower() in AUDIO_EXTENSIONS:
+        if item.is_file() and item.suffix.lower() in extension_set:
             if pattern_lower and pattern_lower not in item.stem.lower():
                 continue
             audio_files.append(item)
@@ -564,7 +585,11 @@ def run_analysis_stage(
     if input_dir is None:
         raise RuntimeError("Analyze stage requires input directory")
 
-    all_audio_files = find_audio_files(input_dir, str(config.get("file_pattern", "")))
+    all_audio_files = find_audio_files(
+        input_dir,
+        str(config.get("file_pattern", "")),
+        config.get("audio_extensions"),
+    )
     if not all_audio_files:
         raise RuntimeError(f"No audio files found in {input_dir}")
 

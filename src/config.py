@@ -22,6 +22,19 @@ AUDIO_OFFSET = 60  # Segment start in seconds
 AUDIO_DURATION = 30  # Segment length in seconds
 SAMPLE_RATE = 16000  # Target sample rate
 NUM_GENRES = 3  # Top-N genres per track
+AUDIO_EXTENSIONS = [
+    ".flac",
+    ".wav",
+    ".aiff",
+    ".aif",
+    ".alac",
+    ".m4a",
+    ".dsf",
+    ".dff",
+    ".ape",
+    ".wv",
+    ".mp3",
+]  # Formats included in analysis; remove an extension to exclude that format
 
 # Model
 MODEL_FILE_PATH = ""  # Optional custom checkpoint file path
@@ -45,6 +58,7 @@ def get_config() -> Dict[str, Any]:
         "audio_offset": AUDIO_OFFSET,
         "audio_duration": AUDIO_DURATION,
         "sample_rate": SAMPLE_RATE,
+        "audio_extensions": AUDIO_EXTENSIONS,
         "num_genres": NUM_GENRES,
         "model_file_path": MODEL_FILE_PATH,
         "model_key": MODEL_KEY,
