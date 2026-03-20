@@ -114,6 +114,15 @@ Example test values:
   - `tracks_genres.xlsx`
   - `report.md`
 
+## Model config rules
+
+- `MODEL_FILE_PATH` in `src/config.py`:
+  - empty -> default model is used; checkpoint auto-download goes to `src/models/`.
+  - set -> pipeline loads your checkpoint file.
+- `MODEL_KEY` in `src/config.py`:
+  - used only when `MODEL_FILE_PATH` is set.
+  - ignored for default model mode (default key remains `maest_519l_pytorch`).
+
 ## Invariants preserved
 
 - MAEST key in JSON: `maest_519l_pytorch`

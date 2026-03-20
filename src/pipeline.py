@@ -36,6 +36,12 @@ except ImportError:
 
 AUDIO_EXTENSIONS = [".wav", ".mp3", ".flac", ".ogg", ".aiff", ".aif", ".m4a"]
 
+DEFAULT_MODELS_DIR = "src/models"
+DEFAULT_MODEL_KEY = "maest_519l_pytorch"
+DEFAULT_MODEL_ARCH = "discogs-maest-30s-pw-129e-519l"
+DEFAULT_CHECKPOINT_FILENAME = "discogs-maest-30s-pw-129e-519l-swa.ckpt"
+DEFAULT_CHECKPOINT_URL = "https://huggingface.co/mtg-upf/discogs-maest-30s-pw-129e-519l/resolve/main/discogs-maest-30s-pw-129e-519l-swa.ckpt"
+
 
 @dataclass
 class RuntimePaths:
@@ -101,6 +107,37 @@ def apply_cli_overrides(base_config: Dict[str, Any], args: Any) -> Dict[str, Any
     else:
         config["tag_mode"] = "ask"
     return config
+
+
+def apply_model_runtime_defaults(
+    config: Dict[str, Any], base_dir: Path
+) -> Dict[str, Any]:
+    runtime = deepcopy(config)
+
+    model_file_path_raw = str(runtime.get("model_file_path", "")).strip()
+    user_model_key = str(runtime.get("model_key", "")).strip()
+
+    checkpoint_path = ""
+    result_key = DEFAULT_MODEL_KEY
+    if model_file_path_raw:
+        custom_model_path = Path(model_file_path_raw)
+        if not custom_model_path.is_absolute():
+            custom_model_path = base_dir / custom_model_path
+        checkpoint_path = str(custom_model_path)
+        result_key = user_model_key or DEFAULT_MODEL_KEY
+
+    runtime["models_dir"] = DEFAULT_MODELS_DIR
+    runtime["maest_result_key"] = result_key
+    runtime["maest_models"] = {
+        result_key: {
+            "enabled": True,
+            "arch": DEFAULT_MODEL_ARCH,
+            "checkpoint_path": checkpoint_path,
+            "checkpoint_filename": DEFAULT_CHECKPOINT_FILENAME,
+            "checkpoint_url": DEFAULT_CHECKPOINT_URL,
+        }
+    }
+    return runtime
 
 
 def _prompt_for_path(prompt_text: str, allow_empty: bool) -> str:
@@ -382,7 +419,9 @@ def load_models(config: Dict[str, Any], script_dir: Path) -> Dict[str, Any]:
 
     models: Dict[str, Any] = {"maest": {}}
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    models_base_path = _resolve_path(script_dir, config.get("models_dir", "src/models"))
+    models_base_path = _resolve_path(
+        script_dir, config.get("models_dir", DEFAULT_MODELS_DIR)
+    )
 
     for model_name, model_params in config.get("maest_models", {}).items():
         if not model_params.get("enabled", False):
@@ -692,6 +731,7 @@ def write_markdown_report(
 def run_pipeline(
     config: Dict[str, Any], stage: str, script_dir: Path, non_interactive: bool
 ) -> int:
+    config = apply_model_runtime_defaults(config, script_dir)
     runtime_paths = build_runtime_paths(script_dir, config, stage, non_interactive)
     analysis_stats: Optional[Dict[str, int]] = None
     excel_stats: Optional[Dict[str, int]] = None

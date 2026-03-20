@@ -6,6 +6,8 @@ from pathlib import Path
 from config import get_config
 from environment import run_environment_checks
 from pipeline import apply_cli_overrides
+from pipeline import DEFAULT_CHECKPOINT_FILENAME
+from pipeline import DEFAULT_MODELS_DIR
 from pipeline import run_pipeline
 from pipeline import setup_logging
 
@@ -83,14 +85,11 @@ def main() -> int:
 
     setup_logging(config.get("loglevel", "INFO"))
     project_dir = Path(__file__).resolve().parent.parent
-    model_key = config.get("maest_result_key", "maest_519l_pytorch")
-    model_config = config.get("maest_models", {}).get(model_key, {})
-
     check_ok = run_environment_checks(
         project_dir,
-        config.get("models_dir", "src/models"),
-        model_config.get("checkpoint_filename", ""),
-        model_config.get("checkpoint_path", ""),
+        DEFAULT_MODELS_DIR,
+        DEFAULT_CHECKPOINT_FILENAME,
+        str(config.get("model_file_path", "")),
     )
     if not check_ok:
         return 1

@@ -24,12 +24,8 @@ SAMPLE_RATE = 16000  # Target sample rate
 NUM_GENRES = 3  # Top-N genres per track
 
 # Model
-MODELS_DIR = "src/models"  # Auto-download target when needed
-MODEL_KEY = "maest_519l_pytorch"  # JSON result key
-MODEL_ARCH = "discogs-maest-30s-pw-129e-519l"  # MAEST architecture
-CHECKPOINT_PATH = ""  # Optional explicit checkpoint file path
-CHECKPOINT_FILENAME = "discogs-maest-30s-pw-129e-519l-swa.ckpt"  # Default checkpoint
-CHECKPOINT_URL = "https://huggingface.co/mtg-upf/discogs-maest-30s-pw-129e-519l/resolve/main/discogs-maest-30s-pw-129e-519l-swa.ckpt"  # Download URL
+MODEL_FILE_PATH = ""  # Optional custom checkpoint file path
+MODEL_KEY = ""  # Optional custom result key (used only with MODEL_FILE_PATH)
 
 # Tagging
 OVERWRITE_EXISTING = False  # Keep existing tags
@@ -50,17 +46,8 @@ def get_config() -> Dict[str, Any]:
         "audio_duration": AUDIO_DURATION,
         "sample_rate": SAMPLE_RATE,
         "num_genres": NUM_GENRES,
-        "models_dir": MODELS_DIR,
-        "maest_result_key": MODEL_KEY,
-        "maest_models": {
-            MODEL_KEY: {
-                "enabled": True,
-                "arch": MODEL_ARCH,
-                "checkpoint_path": CHECKPOINT_PATH,
-                "checkpoint_filename": CHECKPOINT_FILENAME,
-                "checkpoint_url": CHECKPOINT_URL,
-            }
-        },
+        "model_file_path": MODEL_FILE_PATH,
+        "model_key": MODEL_KEY,
         "tagger": {
             "genre_source_field": "genres_maest",
             "file_path_field": "file_path",
