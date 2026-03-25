@@ -141,7 +141,7 @@ def build_excel_dataframe(db_path: Path) -> pd.DataFrame:
                 "status": record["status"],
                 "path": record["path"],
                 "name": record["name"],
-                "duration": _duration_text_to_timedelta(record["time"]),
+                "duration": _duration_excel_value(record),
                 "genres": _format_list_with_comma(labels),
                 "is_broken_beat": _check_broken_beat(labels),
                 "model_key": record["model"],
@@ -151,9 +151,9 @@ def build_excel_dataframe(db_path: Path) -> pd.DataFrame:
 
     dataframe = pd.DataFrame(rows)
     dataframe = dataframe.reindex(columns=EXCEL_COLUMNS)
-    dataframe["duration"] = pd.to_timedelta(
+    dataframe["duration"] = pd.to_numeric(
         dataframe["duration"], errors="coerce"
-    ).fillna(pd.Timedelta(0))
+    ).fillna(0.0)
     dataframe["is_broken_beat"] = dataframe["is_broken_beat"].fillna(False).astype(bool)
     return dataframe
 
@@ -391,3 +391,17 @@ def _duration_text_to_timedelta(value: str) -> timedelta:
         return timedelta(hours=hours, minutes=minutes, seconds=seconds)
     except Exception:
         return timedelta(0)
+
+
+def _duration_excel_value(record: Dict[str, Any]) -> float:
+    try:
+        seconds = float(record.get("seconds", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        seconds = 0.0
+
+    if seconds <= 0:
+        seconds = _duration_text_to_timedelta(
+            str(record.get("time", ""))
+        ).total_seconds()
+
+    return float(seconds) / 86400.0 if seconds > 0 else 0.0
