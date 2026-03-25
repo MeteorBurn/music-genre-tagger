@@ -64,8 +64,8 @@ def get_config() -> Dict[str, Any]:
         "model_file_path": MODEL_FILE_PATH,
         "model_key": MODEL_KEY,
         "tagger": {
-            "genre_source_field": "genres_maest",
-            "file_path_field": "file_path",
+            "genre_source_field": "genres",
+            "file_path_field": "path",
             "status_field": "status",
             "genre_separator": GENRE_SEPARATOR,
             "max_genres": MAX_TAG_GENRES,

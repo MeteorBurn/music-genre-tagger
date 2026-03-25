@@ -15,6 +15,8 @@ from mutagen.mp3 import MP3
 from mutagen.mp4 import MP4
 from mutagen.wave import WAVE
 
+from report import summarize_excel_dataframe
+
 
 def _is_wsl_environment() -> bool:
     return "microsoft" in platform.uname().release.lower()
@@ -177,12 +179,12 @@ def prepare_genre_string(genre_data: Any, max_genres: int, separator: str):
     return separator.join(genres)
 
 
-def _map_status(result: str) -> str:
+def _map_status(result: str) -> tuple[str, str]:
     if result == "success":
-        return "success"
+        return "tag_success", "success"
     if result == "skipped_existing":
-        return "skipped"
-    return "error"
+        return "tag_skipped_existing", "skipped"
+    return "tag_error", "error"
 
 
 def _process_audio_file(file_path: Any, genre_data: Any, config: Dict[str, Any]) -> str:
@@ -236,7 +238,7 @@ def auto_adjust_excel_columns(excel_path: Path) -> None:
     workbook.save(excel_path)
 
 
-def run_genre_tagging(excel_path: Path, config: Dict[str, Any]) -> Dict[str, int]:
+def run_genre_tagging(excel_path: Path, config: Dict[str, Any]) -> Dict[str, Any]:
     if not excel_path.is_file():
         raise RuntimeError(f"Excel file not found: {excel_path}")
 
@@ -260,7 +262,12 @@ def run_genre_tagging(excel_path: Path, config: Dict[str, Any]) -> Dict[str, int
     if config["max_rows"]:
         dataframe = dataframe.head(config["max_rows"]).copy()
 
-    results = {"success": 0, "skipped": 0, "error": 0, "already_processed": 0}
+    results: Dict[str, Any] = {
+        "success": 0,
+        "skipped": 0,
+        "error": 0,
+        "already_processed": 0,
+    }
     total = len(dataframe)
 
     for index, row in dataframe.iterrows():
@@ -268,7 +275,7 @@ def run_genre_tagging(excel_path: Path, config: Dict[str, Any]) -> Dict[str, int
         track_name = Path(file_path_raw).name
 
         current_status = row.get(status_field, "")
-        if current_status == "success":
+        if current_status == "tag_success":
             results["already_processed"] += 1
             logging.info("[%d/%d] Already tagged: %s", index + 1, total, track_name)
             continue
@@ -278,9 +285,9 @@ def run_genre_tagging(excel_path: Path, config: Dict[str, Any]) -> Dict[str, int
             row[config["genre_source_field"]],
             config,
         )
-        mapped_status = _map_status(process_result)
+        mapped_status, counter_key = _map_status(process_result)
         dataframe.at[index, status_field] = mapped_status
-        results[mapped_status] += 1
+        results[counter_key] += 1
 
         if process_result == "success":
             logging.info("[%d/%d] Tagged: %s", index + 1, total, track_name)
@@ -301,4 +308,7 @@ def run_genre_tagging(excel_path: Path, config: Dict[str, Any]) -> Dict[str, int
 
     dataframe.to_excel(excel_path, index=False)
     auto_adjust_excel_columns(excel_path)
+    library_summary = summarize_excel_dataframe(dataframe)
+    results["status_breakdown"] = library_summary.get("status_breakdown", [])
+    results["library_summary"] = library_summary
     return results

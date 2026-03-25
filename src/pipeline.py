@@ -11,6 +11,8 @@ import traceback
 import urllib.request
 from copy import deepcopy
 from dataclasses import dataclass
+from decimal import Decimal
+from decimal import ROUND_DOWN
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
@@ -25,8 +27,13 @@ import numpy as np
 import soundfile as sf
 import torch
 import torchaudio
+from mutagen import File as MutagenFile
 
 from extractor import create_excel_report
+from report import load_best_available_library_summary
+from report import load_cumulative_timings
+from report import summarize_json_library
+from report import write_markdown_report
 from tagger import run_genre_tagging
 
 try:
@@ -268,12 +275,15 @@ def find_audio_files(
 
 
 def build_audio_json_key(audio_path: Path) -> str:
+    return f"{audio_path.stem}__{build_audio_hash(audio_path)}"
+
+
+def build_audio_hash(audio_path: Path) -> str:
     try:
         normalized_path = audio_path.resolve().as_posix()
     except Exception:
         normalized_path = str(audio_path).replace("\\", "/")
-    path_hash = hashlib.sha1(normalized_path.encode("utf-8")).hexdigest()[:16]
-    return f"{audio_path.stem}__{path_hash}"
+    return hashlib.sha1(normalized_path.encode("utf-8")).hexdigest()[:16]
 
 
 def get_existing_json_stems(directory: Path) -> Set[str]:
@@ -284,16 +294,6 @@ def get_existing_json_stems(directory: Path) -> Set[str]:
     for item in directory.glob("*.json"):
         if item.is_file():
             json_stems.add(item.stem)
-            if "__" in item.stem:
-                continue
-            try:
-                data = json.loads(item.read_text(encoding="utf-8"))
-                file_path_data = data.get("file_path", {})
-                win_path = file_path_data.get("win", "")
-                if win_path:
-                    json_stems.add(build_audio_json_key(Path(win_path)))
-            except Exception:
-                continue
     return json_stems
 
 
@@ -352,27 +352,32 @@ def convert_audio_to_wav(
         return None
 
 
-def get_platform_paths(file_path: Path) -> Dict[str, str]:
-    win_path = str(file_path)
-    wsl_path = ""
-    linux_path = file_path.as_posix()
+def _truncate_two_decimals(value: float) -> float:
+    if value <= 0:
+        return 0.0
+    return float(Decimal(str(value)).quantize(Decimal("0.00"), rounding=ROUND_DOWN))
 
+
+def _format_duration_hhmmss(total_seconds: float) -> str:
+    seconds_int = max(0, int(total_seconds))
+    hours = seconds_int // 3600
+    minutes = (seconds_int % 3600) // 60
+    seconds = seconds_int % 60
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def _resolve_audio_duration_seconds(audio_path: Path) -> Optional[float]:
     try:
-        resolved = file_path.resolve()
-        parts = resolved.parts
-        if len(parts) >= 2:
-            drive_raw = parts[0].replace(":", "")
-            if len(drive_raw) == 1 and drive_raw.isalpha():
-                tail = "/".join(parts[1:]).replace("\\", "/")
-                wsl_path = f"/mnt/{drive_raw.lower()}/{tail}"
+        audio_file = MutagenFile(str(audio_path))
+        if audio_file is None or not hasattr(audio_file, "info"):
+            return None
+        duration = getattr(audio_file.info, "length", None)
+        if duration is None:
+            return None
+        duration_float = float(duration)
+        return duration_float if duration_float > 0 else None
     except Exception:
-        wsl_path = ""
-
-    return {
-        "win": win_path,
-        "wsl": wsl_path,
-        "linux": linux_path,
-    }
+        return None
 
 
 def load_mono_16k(audio_path: Path, target_sr: int) -> np.ndarray:
@@ -524,22 +529,55 @@ def analyze_audio_file(
                 "Install ffmpeg and ensure this format is supported by your ffmpeg build."
             )
 
+    duration_raw = _resolve_audio_duration_seconds(original_audio_path)
+    duration_seconds = _truncate_two_decimals(duration_raw or 0.0)
+
+    try:
+        file_size = int(original_audio_path.stat().st_size)
+    except Exception:
+        file_size = 0
+    file_size_mb = _truncate_two_decimals(file_size / (1024.0 * 1024.0))
+
     json_data: Dict[str, Any] = {
-        "file_path": get_platform_paths(original_audio_path),
-        "file_name": original_audio_path.stem,
-        "file_extension": original_audio_path.suffix,
         "timestamp": datetime.now().isoformat(),
+        "hash": build_audio_hash(original_audio_path),
+        "file": {
+            "path": str(original_audio_path.resolve()),
+            "name": original_audio_path.stem,
+            "extension": original_audio_path.suffix,
+            "size": {
+                "megabytes": file_size_mb,
+                "bytes": file_size,
+            },
+            "duration": {
+                "time": _format_duration_hhmmss(duration_seconds),
+                "seconds": duration_seconds,
+            },
+        },
+        "genres": {
+            "labels": [],
+            "confidences": [],
+            "model": str(config.get("maest_result_key", DEFAULT_MODEL_KEY)),
+        },
         "analysis_config": {
             "audio_segment_offset": config["audio_offset"],
             "audio_segment_duration": config["audio_duration"],
         },
-        "analysis_results": {},
     }
 
     try:
         audio = load_mono_16k(path_to_analyze, config["sample_rate"])
         if audio is None or len(audio) < config["sample_rate"] * 0.1:
             raise ValueError("Audio is empty or too short")
+
+        if duration_seconds <= 0:
+            duration_seconds = _truncate_two_decimals(
+                len(audio) / float(config["sample_rate"])
+            )
+            json_data["file"]["duration"] = {
+                "time": _format_duration_hhmmss(duration_seconds),
+                "seconds": duration_seconds,
+            }
 
         audio = trim_audio_segment(
             audio,
@@ -551,7 +589,11 @@ def analyze_audio_file(
             raise ValueError("Audio segment is too short after trimming")
 
         audio_tensor = torch.from_numpy(audio).float()
-        all_results: Dict[str, Any] = {}
+        best_result: Dict[str, Any] = {
+            "labels": [],
+            "confidences": [],
+            "model": str(config.get("maest_result_key", DEFAULT_MODEL_KEY)),
+        }
         for name, maest_data in models.get("maest", {}).items():
             top_n = int(config.get("num_genres", 3) or 3)
             model = maest_data["model"]
@@ -565,11 +607,12 @@ def analyze_audio_file(
 
             cleaned_labels = process_labels(list(labels))
             structured = process_predictions(np.asarray(scores), cleaned_labels, top_n)
-            all_results[name] = {
+            best_result = {
                 "labels": [label for label, _ in structured],
                 "confidences": [round(score, 4) for _, score in structured],
+                "model": name,
             }
-        json_data["analysis_results"] = all_results
+        json_data["genres"] = best_result
     except Exception as exc:
         json_data["error"] = str(exc)
     finally:
@@ -587,7 +630,7 @@ def analyze_audio_file(
 
 def run_analysis_stage(
     config: Dict[str, Any], script_dir: Path, input_dir: Optional[Path], json_dir: Path
-) -> Dict[str, int]:
+) -> Dict[str, Any]:
     if input_dir is None:
         raise RuntimeError("Analyze stage requires input directory")
 
@@ -625,12 +668,13 @@ def run_analysis_stage(
 
     processed = 0
     errors = 0
-    model_key = str(config.get("maest_result_key", DEFAULT_MODEL_KEY))
+    total_elapsed_seconds = 0.0
     for index, audio_path in enumerate(files_to_process, start=1):
         started_at = perf_counter()
         try:
             result = analyze_audio_file(audio_path, models, config, json_dir)
             elapsed_seconds = perf_counter() - started_at
+            total_elapsed_seconds += elapsed_seconds
             if result.get("error"):
                 errors += 1
                 logging.error(
@@ -643,11 +687,7 @@ def run_analysis_stage(
                 )
             else:
                 processed += 1
-                labels = (
-                    result.get("analysis_results", {})
-                    .get(model_key, {})
-                    .get("labels", [])
-                )
+                labels = result.get("genres", {}).get("labels", [])
                 genres_text = ", ".join(labels) if labels else "n/a"
                 logging.info(
                     "[%d/%d] Analyzed: %s [%s] (time: %.2fs)",
@@ -660,6 +700,7 @@ def run_analysis_stage(
         except Exception as exc:
             errors += 1
             elapsed_seconds = perf_counter() - started_at
+            total_elapsed_seconds += elapsed_seconds
             logging.error(
                 "[%d/%d] Analyze exception: %s - %s (time: %.2fs)",
                 index,
@@ -670,23 +711,29 @@ def run_analysis_stage(
             )
             logging.debug(traceback.format_exc())
 
+    files_processed_count = len(files_to_process)
     return {
         "audio_files": len(all_audio_files),
         "processed": processed,
         "errors": errors,
         "skipped_existing": len(all_audio_files) - len(files_to_process),
+        "files_attempted": files_processed_count,
+        "elapsed_seconds": round(total_elapsed_seconds, 2),
+        "average_seconds": round(total_elapsed_seconds / files_processed_count, 2)
+        if files_processed_count
+        else 0.0,
     }
 
 
 def run_excel_stage(
     config: Dict[str, Any], json_dir: Path, excel_path: Path
-) -> Dict[str, int]:
+) -> Dict[str, Any]:
     if not json_dir.is_dir():
         raise RuntimeError(f"JSON directory not found: {json_dir}")
-    return create_excel_report(json_dir, excel_path, config["maest_result_key"])
+    return create_excel_report(json_dir, excel_path)
 
 
-def run_tag_stage(config: Dict[str, Any], excel_path: Path) -> Dict[str, int]:
+def run_tag_stage(config: Dict[str, Any], excel_path: Path) -> Dict[str, Any]:
     return run_genre_tagging(excel_path, config["tagger"])
 
 
@@ -720,118 +767,88 @@ def should_run_tag_stage(
     return True
 
 
-def write_markdown_report(
-    report_path: Path,
-    stage: str,
-    runtime_paths: RuntimePaths,
-    analysis_stats: Optional[Dict[str, int]],
-    excel_stats: Optional[Dict[str, int]],
-    tag_stats: Optional[Dict[str, int]],
-    success: bool,
-    error_text: str,
-) -> None:
-    timestamp = datetime.now().isoformat(timespec="seconds")
-    lines = [
-        "# MusicTagger Report",
-        "",
-        f"- timestamp: {timestamp}",
-        f"- stage: {stage}",
-        f"- success: {str(success).lower()}",
-        f"- input_dir: {runtime_paths.input_dir if runtime_paths.input_dir else ''}",
-        f"- json_dir: {runtime_paths.json_dir}",
-        f"- excel_path: {runtime_paths.excel_path}",
-        f"- report_path: {report_path}",
-    ]
-
-    if error_text:
-        lines.extend(["", "## Error", "", error_text])
-
-    if analysis_stats is not None:
-        lines.extend(
-            [
-                "",
-                "## Analyze",
-                "",
-                f"- audio_files: {analysis_stats.get('audio_files', 0)}",
-                f"- processed: {analysis_stats.get('processed', 0)}",
-                f"- skipped_existing: {analysis_stats.get('skipped_existing', 0)}",
-                f"- errors: {analysis_stats.get('errors', 0)}",
-            ]
-        )
-
-    if excel_stats is not None:
-        lines.extend(
-            [
-                "",
-                "## Excel",
-                "",
-                f"- json_files: {excel_stats.get('json_files', 0)}",
-                f"- rows_added: {excel_stats.get('rows_added', 0)}",
-                f"- rows_total: {excel_stats.get('rows_total', 0)}",
-            ]
-        )
-
-    if tag_stats is not None:
-        lines.extend(
-            [
-                "",
-                "## Tag",
-                "",
-                f"- success: {tag_stats.get('success', 0)}",
-                f"- skipped: {tag_stats.get('skipped', 0)}",
-                f"- error: {tag_stats.get('error', 0)}",
-                f"- already_processed: {tag_stats.get('already_processed', 0)}",
-            ]
-        )
-
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
 def run_pipeline(
     config: Dict[str, Any], stage: str, script_dir: Path, non_interactive: bool
 ) -> int:
     config = apply_model_runtime_defaults(config, script_dir)
     runtime_paths = build_runtime_paths(script_dir, config, stage, non_interactive)
-    analysis_stats: Optional[Dict[str, int]] = None
-    excel_stats: Optional[Dict[str, int]] = None
-    tag_stats: Optional[Dict[str, int]] = None
+    analysis_stats: Optional[Dict[str, Any]] = None
+    excel_stats: Optional[Dict[str, Any]] = None
+    tag_stats: Optional[Dict[str, Any]] = None
+    library_summary: Optional[Dict[str, Any]] = None
+    cumulative_timings = load_cumulative_timings(runtime_paths.report_path)
 
     success = False
     error_text = ""
+    report_status = "running"
+
+    def write_current_report() -> None:
+        current_library_summary = library_summary
+        if current_library_summary is None:
+            current_library_summary = load_best_available_library_summary(
+                runtime_paths.excel_path,
+                runtime_paths.json_dir,
+            )
+
+        write_markdown_report(
+            runtime_paths.report_path,
+            stage,
+            runtime_paths.input_dir,
+            runtime_paths.json_dir,
+            runtime_paths.excel_path,
+            analysis_stats,
+            excel_stats,
+            tag_stats,
+            current_library_summary,
+            report_status,
+            cumulative_timings,
+            success,
+            error_text,
+        )
 
     try:
         if stage in ["all", "analyze"]:
+            stage_started_at = perf_counter()
             analysis_stats = run_analysis_stage(
                 config, script_dir, runtime_paths.input_dir, runtime_paths.json_dir
             )
+            elapsed_seconds = round(perf_counter() - stage_started_at, 2)
+            cumulative_timings["analyze_seconds"] += elapsed_seconds
+            cumulative_timings["total_runtime_seconds"] += elapsed_seconds
+            library_summary = summarize_json_library(runtime_paths.json_dir)
+            write_current_report()
 
         if stage in ["all", "excel"]:
+            stage_started_at = perf_counter()
             excel_stats = run_excel_stage(
                 config, runtime_paths.json_dir, runtime_paths.excel_path
             )
+            elapsed_seconds = round(perf_counter() - stage_started_at, 2)
+            cumulative_timings["excel_seconds"] += elapsed_seconds
+            cumulative_timings["total_runtime_seconds"] += elapsed_seconds
+            library_summary = excel_stats.get("library_summary")
+            write_current_report()
 
         if should_run_tag_stage(
             stage, config.get("tag_mode", "ask"), non_interactive, config
         ):
+            stage_started_at = perf_counter()
             tag_stats = run_tag_stage(config, runtime_paths.excel_path)
+            elapsed_seconds = round(perf_counter() - stage_started_at, 2)
+            cumulative_timings["tag_seconds"] += elapsed_seconds
+            cumulative_timings["total_runtime_seconds"] += elapsed_seconds
+            library_summary = tag_stats.get("library_summary")
+            write_current_report()
 
         success = True
+        report_status = "completed"
     except Exception as exc:
         error_text = str(exc)
+        report_status = "failed"
         logging.error("Pipeline failed: %s", exc)
         logging.debug(traceback.format_exc())
     finally:
-        write_markdown_report(
-            runtime_paths.report_path,
-            stage,
-            runtime_paths,
-            analysis_stats,
-            excel_stats,
-            tag_stats,
-            success,
-            error_text,
-        )
+        write_current_report()
         logging.info("Report written: %s", runtime_paths.report_path)
 
     return 0 if success else 1
