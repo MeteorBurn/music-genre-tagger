@@ -6,6 +6,7 @@ import logging
 import platform
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -33,6 +34,25 @@ def _check_module(import_name: str) -> Tuple[bool, str, str]:
         module = importlib.import_module(import_name)
         version = getattr(module, "__version__", "unknown")
         return True, str(version), ""
+    except Exception as exc:
+        return False, "", str(exc)
+
+
+def _check_sqlite_runtime() -> Tuple[bool, str, str]:
+    try:
+        version = str(sqlite3.sqlite_version)
+        connection = sqlite3.connect(":memory:")
+        connection.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, value TEXT)")
+        connection.execute("INSERT INTO t(value) VALUES ('ok')")
+        row = connection.execute("SELECT value FROM t WHERE id = 1").fetchone()
+        connection.close()
+        if not row or row[0] != "ok":
+            return (
+                False,
+                version,
+                "sqlite runtime smoke test returned unexpected result",
+            )
+        return True, version, ""
     except Exception as exc:
         return False, "", str(exc)
 
@@ -263,7 +283,11 @@ def run_environment_checks(
             ("soundfile", "soundfile"),
             ("torch", "torch"),
             ("torchaudio", "torchaudio"),
+            ("torchvision", "torchvision"),
             ("maest_infer", "maest-infer"),
+            ("pandas", "pandas"),
+            ("openpyxl", "openpyxl"),
+            ("mutagen", "mutagen"),
         ]
 
     missing_packages: List[str] = []
@@ -286,6 +310,12 @@ def run_environment_checks(
         logging.info("FFmpeg found: %s", ffmpeg_path)
     else:
         logging.warning("FFmpeg was not found in PATH")
+
+    sqlite_ok, sqlite_version, sqlite_error = _check_sqlite_runtime()
+    if sqlite_ok:
+        logging.info("SQLite runtime: %s", sqlite_version)
+    else:
+        logging.error("SQLite runtime check failed: %s", sqlite_error)
 
     torch_runtime_warning = False
     try:
@@ -370,6 +400,7 @@ def run_environment_checks(
         (not ok_py)
         or bool(missing_unique)
         or (not maest_ok)
+        or (not sqlite_ok)
         or (not checkpoint_path_ok)
         or torch_restart_required
     )
