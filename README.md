@@ -24,13 +24,14 @@ https://github.com/user-attachments/assets/ae40e272-0067-4a59-93cf-8f9d62e8e763
 **Music Genre Tagger** is an automated ML pipeline that:
 
 - 🔍 **Analyzes** each track with the [MAEST](https://github.com/palonso/MAEST) transformer model (trained on Discogs) and predicts the top-N genres with confidence scores — inference is powered by [maest-infer](https://github.com/openmirlab/maest-infer), a lightweight PyTorch-native repackaging of MAEST
-- 📊 **Aggregates** all results into `tracks_genres.xlsx` — with genre names, confidence scores, duration, and a broken-beat flag for DJ-friendly rhythm filtering
+- 🗄️ **Stores** all analysis results in a local `tracks.db` SQLite database — scales to 50 000+ tracks without filling the filesystem with thousands of small files
+- 📊 **Exports** results to `genres.xlsx` — with genre names, confidence scores, duration, and a broken-beat flag for DJ-friendly rhythm filtering
 - 🏷️ **Writes** genres directly into audio file metadata — ID3 for MP3/WAV, Vorbis comments for FLAC, MP4 tags, and APE tags
 - 📋 **Generates** a cumulative `report.md` after every run — refreshed after each stage with library stats, broken beat summary, and timing totals
 
 **Key properties:**
 
-- ⚡ **Incremental** — already-processed tracks are skipped on reruns, only new files are analyzed
+- ⚡ **Incremental** — already-processed tracks are skipped on reruns by hash, only new files are analyzed
 - 🚀 **Fast** — with CUDA, inference takes 0.25–1 second per track, making large libraries practical to process
 - 🛡️ **Non-destructive by default** — existing genre tags are never overwritten unless you explicitly allow it
 - 🌐 **Cross-platform** — runs on Windows, Linux, WSL; GPU (CUDA) auto-detected and used when available
@@ -50,28 +51,31 @@ Your Music Library
 │  • Convert to 16kHz mono (ffmpeg if needed)         │
 │  • Trim to analysis window (default: 60s–90s)       │
 │  • Run MAEST inference → top-N genres + confidence  │
-│  • Save result to per-track JSON                    │
+│  • Save result to tracks.db                         │
 └───────────────────────┬─────────────────────────────┘
                         │  report.md updated ✓
+                        │  tracks.json updated when enabled ✓
                         ▼
 ┌─────────────────────────────────────────────────────┐
 │  2. EXCEL                                           │
-│  • Read all JSON files                              │
-│  • Deduplicate against existing rows                │
-│  • Write / update  tracks_genres.xlsx               │
+│  • Read tracks.db                                   │
+│  • Fully rebuild genres.xlsx                        │
 └───────────────────────┬─────────────────────────────┘
                         │  report.md updated ✓
                         ▼
 ┌─────────────────────────────────────────────────────┐
 │  3. TAG  (optional)                                 │
-│  • Read tracks_genres.xlsx                          │
+│  • Read genres.xlsx                                 │
 │  • Write genre string into audio file metadata      │
-│  • Update status column (incremental-safe)          │
+│  • Sync status back to tracks.db (incremental-safe) │
 └───────────────────────┬─────────────────────────────┘
                         │  report.md updated ✓
+                        │  tracks.json updated when enabled ✓
                         ▼
                    report.md
 ```
+
+Analyze logs stay compact. If ffmpeg conversion is used, the success line is marked like `track.m4a > .wav [ffmpeg]`, and the reported analysis time includes that conversion step.
 
 ---
 
@@ -83,7 +87,8 @@ music-genre-tagger/
 │   ├── main.py          # Entrypoint & CLI
 │   ├── pipeline.py      # Core flow orchestration
 │   ├── environment.py   # Environment and dependency checks
-│   ├── extractor.py     # JSON → Excel extraction
+│   ├── storage.py       # SQLite storage, tracks.json export
+│   ├── extractor.py     # Database → genres.xlsx export
 │   ├── tagger.py        # Audio tag writing
 │   ├── report.py        # Report generation and library summaries
 │   └── config.py        # User configuration
@@ -116,10 +121,17 @@ source .venv/bin/activate
 
 ```bash
 python -m pip install --upgrade pip
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-> 💡 **GPU note:** On first run, the pipeline automatically detects your NVIDIA GPU and installs a matching CUDA torch build (`cu121`). After install, rerun `python src/main.py` once to continue with updated packages.
+> 💡 **Torch auto-setup:** On first run, `environment.py` checks the installed PyTorch stack and can reinstall `torch`, `torchaudio`, and `torchvision` automatically if the current build does not match your machine.
+>
+> - **Windows CPU:** installs from the default pip index
+> - **Windows GPU:** chooses `cu126`, `cu128`, or `cu130` based on the CUDA version reported by `nvidia-smi`
+> - **Linux CPU:** installs from `https://download.pytorch.org/whl/cpu`
+> - **Linux GPU:** chooses `cu126`, `cu128`, or the default pip index for CUDA `13.0+`
+>
+> After an automatic torch reinstall, rerun `python src/main.py` once so the updated packages are picked up.
 
 ---
 
@@ -132,8 +144,8 @@ python src/main.py
 The pipeline will:
 1. Check environment and dependencies
 2. Ask for input/output paths if not set in `config.py`
-3. Analyze all audio tracks → write per-track JSON files
-4. Aggregate JSON into `tracks_genres.xlsx`
+3. Analyze all audio tracks → store results in `tracks.db`
+4. Build `genres.xlsx` from the database
 5. Optionally write genres into audio file tags
 6. Generate `report.md`
 
@@ -144,14 +156,15 @@ The pipeline will:
 ```
 <output_directory>/
 └── <music_folder_name>/
-    ├── json/
-    │   ├── track_name__hash.json   ← per-track inference result
-    │   └── ...
-    ├── tracks_genres.xlsx          ← aggregated genre table
-    └── report.md                   ← cumulative run and library summary
+    ├── tracks.db           ← SQLite database, primary source of truth
+    ├── genres.xlsx         ← aggregated genre table (rebuilt from DB)
+    ├── report.md           ← cumulative run and library summary
+    └── tracks.json         ← combined JSON snapshot (optional, split at 100 MB)
 ```
 
 > If `output_directory` is not set, the project root is used as the base.
+> JSON export is disabled by default and can be enabled with `WRITE_JSON = True` in `src/config.py` or with `--write-json`.
+> If export exceeds 100 MB, additional files are written as `tracks_1.json`, `tracks_2.json`, and so on.
 
 ---
 
@@ -178,8 +191,8 @@ The pipeline will:
 - analysis_errors_now: 3
 
 ## Excel
-- json_files_seen: 1240
-- rows_added_now: 620
+- tracks_seen: 1240
+- rows_written_now: 1240
 - rows_total: 1240
 
 ## Tag
@@ -207,9 +220,9 @@ The pipeline will:
 
 ---
 
-## 🗂️ Per-track JSON format
+## 🗂️ Track format
 
-Each track produces a JSON file with file metadata and genre predictions:
+Each analyzed track is stored in `tracks.db` and, when JSON export is enabled, exported into `tracks.json` using the same payload shape:
 
 ```json
 {
@@ -242,13 +255,13 @@ Each track produces a JSON file with file metadata and genre predictions:
 
 If inference fails, an `"error"` key is added at the top level and `genres.labels` / `genres.confidences` remain empty lists.
 
-`hash` is the first 16 characters of the SHA-1 of the resolved file path and matches the suffix used in the JSON filename (`track_name__hash.json`).
+`hash` is the first 16 characters of the SHA-1 of the resolved file path.
 
 ---
 
 ## 📊 Excel columns
 
-`tracks_genres.xlsx` contains one row per track with these columns:
+`genres.xlsx` contains one row per track with these columns:
 
 | Column | Description |
 |--------|-------------|
@@ -274,6 +287,11 @@ Edit `src/config.py` to customize behavior:
 INPUT_DIRECTORY = ""   # Path to your music library
 OUTPUT_DIRECTORY = ""  # Path to metadata output folder
 
+# Runtime
+FILE_PATTERN = ""      # Filename substring filter
+MAX_FILES = 0          # 0 = no limit
+WRITE_JSON = False     # Export combined JSON snapshot
+
 # Analysis
 NUM_GENRES = 3         # Top-N genres per track
 AUDIO_OFFSET = 60      # Start of analysis window (seconds)
@@ -288,6 +306,7 @@ MODEL_KEY = ""         # Custom result key (used only with MODEL_FILE_PATH)
 OVERWRITE_EXISTING = False  # Keep existing genre tags (safe default)
 MAX_TAG_GENRES = 3          # Max genres written to tags
 GENRE_SEPARATOR = "; "      # Separator between genres in the tag string
+
 ```
 
 **Model rules:**
@@ -315,6 +334,7 @@ python src/main.py [options]
 | `--tag-no` | Auto-skip genre tagging without prompt |
 | `--non-interactive` | Disable all prompts (for CI/automation) |
 | `--loglevel <level>` | Verbosity: `DEBUG\|INFO\|WARNING\|ERROR\|CRITICAL` |
+| `--write-json` | Export `tracks.json` snapshot files (100 MB chunks) |
 
 **Example commands:**
 
@@ -325,14 +345,14 @@ python src/main.py --input-directory "path/to/music" --output-directory "path/to
 # Analyze only first 5 tracks (smoke test)
 python src/main.py --stage analyze --input-directory "path/to/music" --max-files 5
 
-# Rebuild Excel from existing JSON without re-running inference
+# Rebuild Excel from database without re-running inference
 python src/main.py --stage excel --input-directory "path/to/music" --output-directory "path/to/meta"
 
 # Write tags only (after Excel is ready)
 python src/main.py --stage tag --input-directory "path/to/music" --output-directory "path/to/meta"
 
-# Non-interactive CI mode, skip tagging
-python src/main.py --non-interactive --tag-no --input-directory "path/to/music"
+# Non-interactive CI mode, skip tagging, export JSON chunks
+python src/main.py --non-interactive --tag-no --write-json --input-directory "path/to/music"
 ```
 
 ---

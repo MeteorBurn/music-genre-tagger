@@ -7,7 +7,6 @@ from typing import Any
 from typing import Dict
 
 import pandas as pd
-from openpyxl import load_workbook
 from mutagen import File
 from mutagen.aiff import AIFF
 from mutagen.flac import FLAC
@@ -15,6 +14,7 @@ from mutagen.mp3 import MP3
 from mutagen.mp4 import MP4
 from mutagen.wave import WAVE
 
+from extractor import auto_adjust_excel_columns
 from report import summarize_excel_dataframe
 
 
@@ -224,20 +224,6 @@ def _process_audio_file(file_path: Any, genre_data: Any, config: Dict[str, Any])
     return "tag_error"
 
 
-def auto_adjust_excel_columns(excel_path: Path) -> None:
-    workbook = load_workbook(excel_path)
-    worksheet = workbook.active
-    for column_cells in worksheet.columns:
-        max_len = 0
-        column_letter = column_cells[0].column_letter
-        for cell in column_cells:
-            value = "" if cell.value is None else str(cell.value)
-            if len(value) > max_len:
-                max_len = len(value)
-        worksheet.column_dimensions[column_letter].width = min(max_len + 2, 80)
-    workbook.save(excel_path)
-
-
 def run_genre_tagging(excel_path: Path, config: Dict[str, Any]) -> Dict[str, Any]:
     if not excel_path.is_file():
         raise RuntimeError(f"Excel file not found: {excel_path}")
@@ -267,6 +253,7 @@ def run_genre_tagging(excel_path: Path, config: Dict[str, Any]) -> Dict[str, Any
         "skipped": 0,
         "error": 0,
         "already_processed": 0,
+        "status_updates": [],
     }
     total = len(dataframe)
 
@@ -288,6 +275,7 @@ def run_genre_tagging(excel_path: Path, config: Dict[str, Any]) -> Dict[str, Any
         mapped_status, counter_key = _map_status(process_result)
         dataframe.at[index, status_field] = mapped_status
         results[counter_key] += 1
+        results["status_updates"].append((file_path_raw, mapped_status))
 
         if process_result == "success":
             logging.info("[%d/%d] Tagged: %s", index + 1, total, track_name)

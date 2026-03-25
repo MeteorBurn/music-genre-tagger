@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import hashlib
-import json
 import logging
 import os
 import re
@@ -20,7 +19,6 @@ from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
-from typing import Set
 from typing import Tuple
 
 import numpy as np
@@ -32,8 +30,13 @@ from mutagen import File as MutagenFile
 from extractor import create_excel_report
 from report import load_best_available_library_summary
 from report import load_cumulative_timings
-from report import summarize_json_library
+from report import summarize_database_library
 from report import write_markdown_report
+from storage import export_tracks_json
+from storage import get_existing_hashes
+from storage import init_db
+from storage import upsert_track
+from storage import update_track_statuses
 from tagger import run_genre_tagging
 
 try:
@@ -68,27 +71,17 @@ class RuntimePaths:
     input_dir: Optional[Path]
     output_base: Optional[Path]
     meta_root: Optional[Path]
-    json_dir: Path
+    db_path: Path
+    tracks_json_path: Path
     excel_path: Path
     report_path: Path
-
-
-class NumpyEncoder(json.JSONEncoder):
-    def default(self, obj: Any):
-        if isinstance(obj, np.integer):
-            return int(obj)
-        if isinstance(obj, np.floating):
-            return float(obj)
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        return super().default(obj)
 
 
 def setup_logging(level: str) -> None:
     log_level = getattr(logging, level.upper(), logging.INFO)
     logging.basicConfig(
         level=log_level,
-        format="%(asctime)s - %(levelname)-8s - %(message)s",
+        format="%(asctime)s - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
@@ -120,6 +113,8 @@ def apply_cli_overrides(base_config: Dict[str, Any], args: Any) -> Dict[str, Any
         config["max_files"] = args.max_files
     if args.convert_to_wav:
         config["convert_to_wav"] = True
+    if args.write_json:
+        config["write_json"] = True
     if args.tag_yes:
         config["tag_mode"] = "yes"
     elif args.tag_no:
@@ -237,16 +232,18 @@ def build_runtime_paths(
             "Unable to build runtime paths: input_directory and output_directory are required"
         )
 
-    json_dir = meta_root / "json"
-    excel_path = meta_root / "tracks_genres.xlsx"
+    meta_root.mkdir(parents=True, exist_ok=True)
+    db_path = meta_root / "tracks.db"
+    tracks_json_path = meta_root / "tracks.json"
+    excel_path = meta_root / "genres.xlsx"
     report_path = meta_root / "report.md"
 
-    json_dir.parent.mkdir(parents=True, exist_ok=True)
     return RuntimePaths(
         input_dir=input_dir,
         output_base=output_base,
         meta_root=meta_root,
-        json_dir=json_dir,
+        db_path=db_path,
+        tracks_json_path=tracks_json_path,
         excel_path=excel_path,
         report_path=report_path,
     )
@@ -274,27 +271,12 @@ def find_audio_files(
     return audio_files
 
 
-def build_audio_json_key(audio_path: Path) -> str:
-    return f"{audio_path.stem}__{build_audio_hash(audio_path)}"
-
-
 def build_audio_hash(audio_path: Path) -> str:
     try:
         normalized_path = audio_path.resolve().as_posix()
     except Exception:
         normalized_path = str(audio_path).replace("\\", "/")
     return hashlib.sha1(normalized_path.encode("utf-8")).hexdigest()[:16]
-
-
-def get_existing_json_stems(directory: Path) -> Set[str]:
-    json_stems: Set[str] = set()
-    if not directory.is_dir():
-        return json_stems
-
-    for item in directory.glob("*.json"):
-        if item.is_file():
-            json_stems.add(item.stem)
-    return json_stems
 
 
 def trim_audio_segment(
@@ -503,7 +485,6 @@ def analyze_audio_file(
     original_audio_path: Path,
     models: Dict[str, Any],
     config: Dict[str, Any],
-    output_dir: Path,
 ) -> Dict[str, Any]:
     path_to_analyze = original_audio_path
     temp_wav_file: Optional[Path] = None
@@ -563,6 +544,7 @@ def analyze_audio_file(
             "audio_segment_offset": config["audio_offset"],
             "audio_segment_duration": config["audio_duration"],
         },
+        "_converted_with_ffmpeg": bool(should_convert),
     }
 
     try:
@@ -616,12 +598,6 @@ def analyze_audio_file(
     except Exception as exc:
         json_data["error"] = str(exc)
     finally:
-        output_dir.mkdir(parents=True, exist_ok=True)
-        json_filename = output_dir / f"{build_audio_json_key(original_audio_path)}.json"
-        json_filename.write_text(
-            json.dumps(json_data, ensure_ascii=False, indent=2, cls=NumpyEncoder),
-            encoding="utf-8",
-        )
         if needs_cleanup and temp_wav_file and temp_wav_file.exists():
             temp_wav_file.unlink(missing_ok=True)
 
@@ -629,10 +605,12 @@ def analyze_audio_file(
 
 
 def run_analysis_stage(
-    config: Dict[str, Any], script_dir: Path, input_dir: Optional[Path], json_dir: Path
+    config: Dict[str, Any], script_dir: Path, input_dir: Optional[Path], db_path: Path
 ) -> Dict[str, Any]:
     if input_dir is None:
         raise RuntimeError("Analyze stage requires input directory")
+
+    init_db(db_path)
 
     all_audio_files = find_audio_files(
         input_dir,
@@ -642,11 +620,11 @@ def run_analysis_stage(
     if not all_audio_files:
         raise RuntimeError(f"No audio files found in {input_dir}")
 
-    existing_stems = get_existing_json_stems(json_dir)
+    existing_hashes = get_existing_hashes(db_path)
     unprocessed_files = [
         file_path
         for file_path in all_audio_files
-        if build_audio_json_key(file_path) not in existing_stems
+        if build_audio_hash(file_path) not in existing_hashes
     ]
 
     max_files_to_process = int(config.get("max_files", 0) or 0)
@@ -672,7 +650,8 @@ def run_analysis_stage(
     for index, audio_path in enumerate(files_to_process, start=1):
         started_at = perf_counter()
         try:
-            result = analyze_audio_file(audio_path, models, config, json_dir)
+            result = analyze_audio_file(audio_path, models, config)
+            upsert_track(db_path, result)
             elapsed_seconds = perf_counter() - started_at
             total_elapsed_seconds += elapsed_seconds
             if result.get("error"):
@@ -687,14 +666,15 @@ def run_analysis_stage(
                 )
             else:
                 processed += 1
-                labels = result.get("genres", {}).get("labels", [])
-                genres_text = ", ".join(labels) if labels else "n/a"
+                conversion_suffix = ""
+                if result.get("_converted_with_ffmpeg"):
+                    conversion_suffix = " > .wav [ffmpeg]"
                 logging.info(
-                    "[%d/%d] Analyzed: %s [%s] (time: %.2fs)",
+                    "[%d/%d] Analyzed: %s%s (time: %.2fs)",
                     index,
                     len(files_to_process),
                     audio_path.name,
-                    genres_text,
+                    conversion_suffix,
                     elapsed_seconds,
                 )
         except Exception as exc:
@@ -726,15 +706,22 @@ def run_analysis_stage(
 
 
 def run_excel_stage(
-    config: Dict[str, Any], json_dir: Path, excel_path: Path
+    config: Dict[str, Any], db_path: Path, excel_path: Path
 ) -> Dict[str, Any]:
-    if not json_dir.is_dir():
-        raise RuntimeError(f"JSON directory not found: {json_dir}")
-    return create_excel_report(json_dir, excel_path)
+    if not db_path.is_file():
+        raise RuntimeError(f"Database file not found: {db_path}")
+    return create_excel_report(db_path, excel_path)
 
 
-def run_tag_stage(config: Dict[str, Any], excel_path: Path) -> Dict[str, Any]:
-    return run_genre_tagging(excel_path, config["tagger"])
+def run_tag_stage(
+    config: Dict[str, Any], db_path: Path, excel_path: Path
+) -> Dict[str, Any]:
+    if not db_path.is_file():
+        raise RuntimeError(f"Database file not found: {db_path}")
+
+    tag_stats = run_genre_tagging(excel_path, config["tagger"])
+    update_track_statuses(db_path, tag_stats.get("status_updates", []))
+    return tag_stats
 
 
 def _prompt_overwrite() -> bool:
@@ -782,19 +769,27 @@ def run_pipeline(
     error_text = ""
     report_status = "running"
 
+    def refresh_tracks_json() -> None:
+        if not config.get("write_json", False):
+            return
+        if not runtime_paths.db_path.is_file():
+            return
+        export_tracks_json(runtime_paths.db_path, runtime_paths.tracks_json_path)
+
     def write_current_report() -> None:
         current_library_summary = library_summary
         if current_library_summary is None:
             current_library_summary = load_best_available_library_summary(
+                runtime_paths.db_path,
                 runtime_paths.excel_path,
-                runtime_paths.json_dir,
             )
 
         write_markdown_report(
             runtime_paths.report_path,
             stage,
             runtime_paths.input_dir,
-            runtime_paths.json_dir,
+            runtime_paths.db_path,
+            runtime_paths.tracks_json_path if config.get("write_json", False) else None,
             runtime_paths.excel_path,
             analysis_stats,
             excel_stats,
@@ -810,18 +805,19 @@ def run_pipeline(
         if stage in ["all", "analyze"]:
             stage_started_at = perf_counter()
             analysis_stats = run_analysis_stage(
-                config, script_dir, runtime_paths.input_dir, runtime_paths.json_dir
+                config, script_dir, runtime_paths.input_dir, runtime_paths.db_path
             )
             elapsed_seconds = round(perf_counter() - stage_started_at, 2)
             cumulative_timings["analyze_seconds"] += elapsed_seconds
             cumulative_timings["total_runtime_seconds"] += elapsed_seconds
-            library_summary = summarize_json_library(runtime_paths.json_dir)
+            library_summary = summarize_database_library(runtime_paths.db_path)
+            refresh_tracks_json()
             write_current_report()
 
         if stage in ["all", "excel"]:
             stage_started_at = perf_counter()
             excel_stats = run_excel_stage(
-                config, runtime_paths.json_dir, runtime_paths.excel_path
+                config, runtime_paths.db_path, runtime_paths.excel_path
             )
             elapsed_seconds = round(perf_counter() - stage_started_at, 2)
             cumulative_timings["excel_seconds"] += elapsed_seconds
@@ -833,11 +829,14 @@ def run_pipeline(
             stage, config.get("tag_mode", "ask"), non_interactive, config
         ):
             stage_started_at = perf_counter()
-            tag_stats = run_tag_stage(config, runtime_paths.excel_path)
+            tag_stats = run_tag_stage(
+                config, runtime_paths.db_path, runtime_paths.excel_path
+            )
             elapsed_seconds = round(perf_counter() - stage_started_at, 2)
             cumulative_timings["tag_seconds"] += elapsed_seconds
             cumulative_timings["total_runtime_seconds"] += elapsed_seconds
-            library_summary = tag_stats.get("library_summary")
+            library_summary = summarize_database_library(runtime_paths.db_path)
+            refresh_tracks_json()
             write_current_report()
 
         success = True
@@ -848,6 +847,7 @@ def run_pipeline(
         logging.error("Pipeline failed: %s", exc)
         logging.debug(traceback.format_exc())
     finally:
+        refresh_tracks_json()
         write_current_report()
         logging.info("Report written: %s", runtime_paths.report_path)
 
