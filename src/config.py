@@ -13,6 +13,7 @@ OUTPUT_DIRECTORY = ""  # Metadata base path
 # Runtime
 FILE_PATTERN = ""  # Filename substring filter, empty = all
 MAX_FILES = 0  # 0 = no limit
+WRITE_JSON = False  # Export combined tracks.json snapshot
 AUDIO_EXTENSIONS = [
     ".flac",
     ".wav",
@@ -54,6 +55,7 @@ def get_config() -> Dict[str, Any]:
         "output_directory": OUTPUT_DIRECTORY,
         "file_pattern": FILE_PATTERN,
         "max_files": MAX_FILES,
+        "write_json": WRITE_JSON,
         "audio_extensions": AUDIO_EXTENSIONS,
         "audio_offset": AUDIO_OFFSET,
         "audio_duration": AUDIO_DURATION,
@@ -73,5 +75,4 @@ def get_config() -> Dict[str, Any]:
             "max_rows": None,
         },
         "loglevel": LOG_LEVEL,
-        "write_tracks_json": True,
     }

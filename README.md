@@ -53,7 +53,8 @@ Your Music Library
 │  • Run MAEST inference → top-N genres + confidence  │
 │  • Save result to tracks.db                         │
 └───────────────────────┬─────────────────────────────┘
-                        │  tracks.json + report.md updated ✓
+                        │  report.md updated ✓
+                        │  tracks.json updated when enabled ✓
                         ▼
 ┌─────────────────────────────────────────────────────┐
 │  2. EXCEL                                           │
@@ -68,7 +69,8 @@ Your Music Library
 │  • Write genre string into audio file metadata      │
 │  • Sync status back to tracks.db (incremental-safe) │
 └───────────────────────┬─────────────────────────────┘
-                        │  tracks.json + report.md updated ✓
+                        │  report.md updated ✓
+                        │  tracks.json updated when enabled ✓
                         ▼
                    report.md
 ```
@@ -148,11 +150,12 @@ The pipeline will:
     ├── tracks.db           ← SQLite database, primary source of truth
     ├── genres.xlsx         ← aggregated genre table (rebuilt from DB)
     ├── report.md           ← cumulative run and library summary
-    └── tracks.json         ← combined JSON snapshot (optional)
+    └── tracks.json         ← combined JSON snapshot (optional, split at 100 MB)
 ```
 
 > If `output_directory` is not set, the project root is used as the base.
-> `tracks.json` is created by default and can be disabled with `--no-tracks-json`.
+> JSON export is disabled by default and can be enabled with `WRITE_JSON = True` in `src/config.py` or with `--write-json`.
+> If export exceeds 100 MB, additional files are written as `tracks_1.json`, `tracks_2.json`, and so on.
 
 ---
 
@@ -210,7 +213,7 @@ The pipeline will:
 
 ## 🗂️ Track format
 
-Each analyzed track is stored in `tracks.db` and exported into `tracks.json` using the same payload shape:
+Each analyzed track is stored in `tracks.db` and, when JSON export is enabled, exported into `tracks.json` using the same payload shape:
 
 ```json
 {
@@ -275,6 +278,11 @@ Edit `src/config.py` to customize behavior:
 INPUT_DIRECTORY = ""   # Path to your music library
 OUTPUT_DIRECTORY = ""  # Path to metadata output folder
 
+# Runtime
+FILE_PATTERN = ""      # Filename substring filter
+MAX_FILES = 0          # 0 = no limit
+WRITE_JSON = False     # Export combined JSON snapshot
+
 # Analysis
 NUM_GENRES = 3         # Top-N genres per track
 AUDIO_OFFSET = 60      # Start of analysis window (seconds)
@@ -317,7 +325,7 @@ python src/main.py [options]
 | `--tag-no` | Auto-skip genre tagging without prompt |
 | `--non-interactive` | Disable all prompts (for CI/automation) |
 | `--loglevel <level>` | Verbosity: `DEBUG\|INFO\|WARNING\|ERROR\|CRITICAL` |
-| `--no-tracks-json` | Skip exporting `tracks.json` |
+| `--write-json` | Export `tracks.json` snapshot files (100 MB chunks) |
 
 **Example commands:**
 
@@ -334,8 +342,8 @@ python src/main.py --stage excel --input-directory "path/to/music" --output-dire
 # Write tags only (after Excel is ready)
 python src/main.py --stage tag --input-directory "path/to/music" --output-directory "path/to/meta"
 
-# Non-interactive CI mode, skip tagging, skip tracks.json
-python src/main.py --non-interactive --tag-no --no-tracks-json --input-directory "path/to/music"
+# Non-interactive CI mode, skip tagging, export JSON chunks
+python src/main.py --non-interactive --tag-no --write-json --input-directory "path/to/music"
 ```
 
 ---
@@ -363,4 +371,4 @@ This project is built on top of the MAEST model and ecosystem:
 
 - **[MAEST](https://github.com/palonso/MAEST)** — Music Audio Efficient Spectrogram Transformer, the original research model by Pablo Alonso-Jiménez and colleagues at the Music Technology Group (MTG), Universitat Pompeu Fabra. Trained on the Discogs dataset for multi-label music genre classification.
 
-- **[maest-infer](https://github.com/openmirlab/maest-infer)** — A lightweight, dependency-minimal repackaging of MAEST focused solely on inference, with native PyTorch and torchaudio support. This is the package used directl
+- **[maest-infer](https://github.com/openmirlab/maest-infer)** — A lightweight, dependency-minimal repackaging of MAEST focused solely on inference, with native PyTorch and torchaudio support. This is the package used directly by Music Genre Tagger.

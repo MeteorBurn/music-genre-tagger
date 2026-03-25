@@ -113,8 +113,8 @@ def apply_cli_overrides(base_config: Dict[str, Any], args: Any) -> Dict[str, Any
         config["max_files"] = args.max_files
     if args.convert_to_wav:
         config["convert_to_wav"] = True
-    if args.no_tracks_json:
-        config["write_tracks_json"] = False
+    if args.write_json:
+        config["write_json"] = True
     if args.tag_yes:
         config["tag_mode"] = "yes"
     elif args.tag_no:
@@ -768,7 +768,7 @@ def run_pipeline(
     report_status = "running"
 
     def refresh_tracks_json() -> None:
-        if not config.get("write_tracks_json", True):
+        if not config.get("write_json", False):
             return
         if not runtime_paths.db_path.is_file():
             return
@@ -787,9 +787,7 @@ def run_pipeline(
             stage,
             runtime_paths.input_dir,
             runtime_paths.db_path,
-            runtime_paths.tracks_json_path
-            if config.get("write_tracks_json", True)
-            else None,
+            runtime_paths.tracks_json_path if config.get("write_json", False) else None,
             runtime_paths.excel_path,
             analysis_stats,
             excel_stats,

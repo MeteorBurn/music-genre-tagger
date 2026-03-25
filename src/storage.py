@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import sqlite3
 from datetime import datetime
 from datetime import timedelta
@@ -62,6 +63,8 @@ EXCEL_COLUMNS = [
     "model_key",
     "confidences",
 ]
+
+MAX_TRACKS_JSON_BYTES = 100 * 1024 * 1024
 
 
 def init_db(db_path: Path) -> None:
@@ -179,17 +182,23 @@ def update_track_statuses(
         )
 
 
-def export_tracks_json(db_path: Path, output_path: Path) -> None:
+def export_tracks_json(db_path: Path, output_path: Path) -> List[Path]:
     tracks = [_build_track_payload(record) for record in load_track_records(db_path)]
-    payload = {
-        "timestamp": datetime.now().isoformat(timespec="seconds"),
-        "tracks": tracks,
-    }
+    timestamp = datetime.now().isoformat(timespec="seconds")
+    serialized_chunks = _split_tracks_json_chunks(tracks, timestamp)
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    written_paths: List[Path] = []
+    for index, chunk_bytes in enumerate(serialized_chunks):
+        chunk_path = _build_tracks_json_path(output_path, index)
+        chunk_path.write_bytes(chunk_bytes)
+        written_paths.append(chunk_path)
+
+    for existing_path in _list_tracks_json_paths(output_path):
+        if existing_path not in written_paths:
+            existing_path.unlink(missing_ok=True)
+
+    return written_paths
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
@@ -198,6 +207,72 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     connection.execute("PRAGMA journal_mode=WAL")
     connection.execute("PRAGMA busy_timeout=30000")
     return connection
+
+
+def _split_tracks_json_chunks(
+    tracks: Sequence[Dict[str, Any]], timestamp: str
+) -> List[bytes]:
+    prefix = (
+        '{"timestamp":' + json.dumps(timestamp, ensure_ascii=False) + ',"tracks":['
+    ).encode("utf-8")
+    suffix = b"]}"
+    base_size = len(prefix) + len(suffix)
+
+    if not tracks:
+        return [prefix + suffix]
+
+    serialized_tracks = [
+        json.dumps(track, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        for track in tracks
+    ]
+
+    chunks: List[List[bytes]] = []
+    current_chunk: List[bytes] = []
+    current_size = base_size
+
+    for track_bytes in serialized_tracks:
+        track_size = len(track_bytes)
+        candidate_size = current_size + track_size + (1 if current_chunk else 0)
+        if current_chunk and candidate_size > MAX_TRACKS_JSON_BYTES:
+            chunks.append(current_chunk)
+            current_chunk = [track_bytes]
+            current_size = base_size + track_size
+        else:
+            current_chunk.append(track_bytes)
+            current_size = candidate_size
+
+        if base_size + track_size > MAX_TRACKS_JSON_BYTES:
+            logging.warning(
+                "Single track JSON payload exceeds %d bytes limit; writing it alone",
+                MAX_TRACKS_JSON_BYTES,
+            )
+
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    return [prefix + b",".join(chunk) + suffix for chunk in chunks]
+
+
+def _build_tracks_json_path(base_path: Path, index: int) -> Path:
+    if index == 0:
+        return base_path
+    return base_path.with_name(f"{base_path.stem}_{index}{base_path.suffix}")
+
+
+def _list_tracks_json_paths(base_path: Path) -> List[Path]:
+    pattern = re.compile(
+        rf"^{re.escape(base_path.stem)}(?:_(\d+))?{re.escape(base_path.suffix)}$"
+    )
+    matches: List[Tuple[int, Path]] = []
+    for candidate in base_path.parent.glob(f"{base_path.stem}*{base_path.suffix}"):
+        match = pattern.match(candidate.name)
+        if not match:
+            continue
+        index_text = match.group(1)
+        sort_index = int(index_text) if index_text is not None else 0
+        matches.append((sort_index, candidate))
+    matches.sort(key=lambda item: item[0])
+    return [candidate for _, candidate in matches]
 
 
 def _flatten_track(track_data: Dict[str, Any]) -> Dict[str, Any]:

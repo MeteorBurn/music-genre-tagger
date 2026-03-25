@@ -99,11 +99,15 @@ Storage rules:
 ### Combined JSON file: `tracks.json`
 
 - optional export
-- enabled by default (`WRITE_TRACKS_JSON = True`)
-- disabled with `--no-tracks-json`
+- disabled by default (`WRITE_JSON = False`)
+- enabled with `--write-json` or `WRITE_JSON = True`
 - contains a root object with `timestamp` and `tracks`
 - each item in `tracks` matches the familiar per-track payload shape
 - refreshed after `analyze`, after `tag`, and in the `finally` block
+- split into multiple files when export exceeds 100 MB:
+  - `tracks.json`
+  - `tracks_1.json`
+  - `tracks_2.json`
 
 ### Excel file: `genres.xlsx`
 
@@ -149,7 +153,8 @@ Excel formatting applied automatically:
 ### `config.py`
 
 - `get_config()` returns the full runtime config dict.
-- `write_tracks_json` defaults to `True` in the returned dict; it is not a user-facing constant — it can only be set to `False` via the `--no-tracks-json` CLI flag.
+- `WRITE_JSON` is a runtime config constant placed after `MAX_FILES` in the Runtime block.
+- `get_config()` returns it as `config["write_json"]`.
 - Tagger sub-config keys live under `config["tagger"]`:
   - `genre_source_field` = `"genres"`
   - `file_path_field` = `"path"`
@@ -160,7 +165,7 @@ Excel formatting applied automatically:
 
 - Parses CLI args with `argparse` and calls `apply_cli_overrides()`.
 - Runs `run_environment_checks()` before the pipeline.
-- Exposes `--no-tracks-json` to disable `tracks.json` export.
+- Exposes `--write-json` to enable `tracks.json` export.
 - Returns exit code `0` on success, `1` on failure.
 
 ### `environment.py`
@@ -175,7 +180,7 @@ Excel formatting applied automatically:
 ### `pipeline.py`
 
 - `run_pipeline(config, stage, script_dir, non_interactive) -> int` — main coordinator; returns `0` on success, `1` on failure.
-- `apply_cli_overrides(base_config, args)` — merges argparse namespace into config dict; sets `config["tag_mode"]` and `config["write_tracks_json"]`.
+- `apply_cli_overrides(base_config, args)` — merges argparse namespace into config dict; sets `config["tag_mode"]` and `config["write_json"]`.
 - `apply_model_runtime_defaults(config, base_dir)` — builds `maest_models` dict and `maest_result_key` at runtime.
 - `build_runtime_paths(script_dir, config, stage, non_interactive) -> RuntimePaths` — resolves input/output dirs and derives all output paths:
   - `db_path` = `meta_root / "tracks.db"`
@@ -200,7 +205,7 @@ Excel formatting applied automatically:
 - `build_excel_dataframe(db_path) -> pd.DataFrame` — converts DB rows into the fixed Excel column shape.
 - `load_track_records(db_path) -> List[Dict]` — returns all rows ordered by `path COLLATE NOCASE`.
 - `update_track_statuses(db_path, status_updates)` — bulk-updates `status` and `updated_at` by `path`.
-- `export_tracks_json(db_path, output_path)` — writes combined JSON snapshot with `timestamp` and `tracks`.
+- `export_tracks_json(db_path, output_path)` — writes combined JSON snapshot files with `timestamp` and `tracks`, split into 100 MB chunks if needed.
 
 ### `extractor.py`
 
