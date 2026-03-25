@@ -324,6 +324,7 @@ python src/main.py [options]
 
 | Option | Description |
 |--------|-------------|
+| `-h`, `--help` | Show help message and exit |
 | `--stage all\|analyze\|excel\|tag` | Run the full pipeline or a single stage (default: `all`) |
 | `--input-directory <path>` | Path to source music library |
 | `--output-directory <path>` | Path for metadata output |
@@ -333,8 +334,8 @@ python src/main.py [options]
 | `--tag-yes` | Auto-confirm genre tagging without prompt |
 | `--tag-no` | Auto-skip genre tagging without prompt |
 | `--non-interactive` | Disable all prompts (for CI/automation) |
-| `--loglevel <level>` | Verbosity: `DEBUG\|INFO\|WARNING\|ERROR\|CRITICAL` |
 | `--write-json` | Export `tracks.json` snapshot files (100 MB chunks) |
+| `--loglevel <level>` | Verbosity: `DEBUG\|INFO\|WARNING\|ERROR\|CRITICAL` |
 
 **Example commands:**
 
