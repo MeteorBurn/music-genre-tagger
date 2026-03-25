@@ -149,7 +149,7 @@ Excel formatting applied automatically:
 ### `config.py`
 
 - `get_config()` returns the full runtime config dict.
-- `write_tracks_json` key controls JSON export; can be disabled from CLI.
+- `write_tracks_json` defaults to `True` in the returned dict; it is not a user-facing constant — it can only be set to `False` via the `--no-tracks-json` CLI flag.
 - Tagger sub-config keys live under `config["tagger"]`:
   - `genre_source_field` = `"genres"`
   - `file_path_field` = `"path"`

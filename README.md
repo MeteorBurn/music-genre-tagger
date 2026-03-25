@@ -290,8 +290,6 @@ OVERWRITE_EXISTING = False  # Keep existing genre tags (safe default)
 MAX_TAG_GENRES = 3          # Max genres written to tags
 GENRE_SEPARATOR = "; "      # Separator between genres in the tag string
 
-# Export
-WRITE_TRACKS_JSON = True    # Export combined tracks.json snapshot (disable with --no-tracks-json)
 ```
 
 **Model rules:**
