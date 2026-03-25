@@ -75,6 +75,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL.",
     )
+    parser.add_argument(
+        "--no-tracks-json",
+        action="store_true",
+        help="Skip exporting the combined tracks.json snapshot.",
+    )
     return parser
 
 

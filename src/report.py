@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import json
 import logging
 import re
 from collections import Counter
@@ -15,6 +14,8 @@ from typing import Optional
 from typing import Tuple
 
 import pandas as pd
+
+from storage import build_excel_dataframe
 
 
 BROKEN_BEAT_GENRES = {
@@ -147,92 +148,21 @@ def summarize_excel_library(excel_path: Path) -> Dict[str, object]:
     return summarize_excel_dataframe(dataframe)
 
 
-def summarize_json_library(json_dir: Path) -> Dict[str, object]:
-    summary: Dict[str, object] = {
-        "total_tracks": 0,
-        "total_duration_seconds": 0.0,
-        "average_duration_seconds": 0.0,
-        "broken_beat_tracks": 0,
-        "tracks_with_empty_genres": 0,
-        "top_genres": [],
-        "extension_counts": [],
-        "model_key_counts": [],
-        "status_breakdown": [],
-        "json_files_total": 0,
-    }
-
-    json_files = _find_json_files(json_dir)
-    if not json_files:
-        return summary
-
-    genre_counter: Counter[str] = Counter()
-    extension_counter: Counter[str] = Counter()
-    model_counter: Counter[str] = Counter()
-    status_counter: Counter[str] = Counter()
-    total_duration_seconds = 0.0
-    broken_beat_tracks = 0
-    tracks_with_empty_genres = 0
-
-    for json_file in json_files:
-        try:
-            data = json.loads(json_file.read_text(encoding="utf-8"))
-        except Exception as exc:
-            logging.error("Error reading %s: %s", json_file, exc)
-            continue
-
-        file_data = data.get("file", {})
-        genres_data = data.get("genres", {})
-        labels = _normalize_genre_list(genres_data.get("labels", []))
-
-        if labels:
-            genre_counter.update(labels)
-        else:
-            tracks_with_empty_genres += 1
-
-        if _check_broken_beat(labels):
-            broken_beat_tracks += 1
-
-        extension = str(file_data.get("extension", "")).strip().lower()
-        extension_counter[extension or "[no_ext]"] += 1
-
-        model_key = str(genres_data.get("model", "")).strip()
-        if model_key:
-            model_counter[model_key] += 1
-
-        total_duration_seconds += float(
-            file_data.get("duration", {}).get("seconds", 0.0) or 0.0
-        )
-
-        status_counter[
-            "analysis_error"
-            if str(data.get("error", "")).strip()
-            else "analysis_success"
-        ] += 1
-
-    total_tracks = sum(status_counter.values())
-    summary["total_tracks"] = total_tracks
-    summary["total_duration_seconds"] = total_duration_seconds
-    summary["average_duration_seconds"] = (
-        total_duration_seconds / total_tracks if total_tracks else 0.0
-    )
-    summary["broken_beat_tracks"] = broken_beat_tracks
-    summary["tracks_with_empty_genres"] = tracks_with_empty_genres
-    summary["top_genres"] = _format_counter(genre_counter, limit=TOP_GENRES_LIMIT)
-    summary["extension_counts"] = _format_counter(extension_counter)
-    summary["model_key_counts"] = _format_counter(model_counter)
-    summary["status_breakdown"] = _format_counter(status_counter)
-    summary["json_files_total"] = len(json_files)
-    return summary
+def summarize_database_library(db_path: Path) -> Dict[str, object]:
+    if not db_path.exists():
+        return summarize_excel_dataframe(pd.DataFrame())
+    dataframe = build_excel_dataframe(db_path)
+    return summarize_excel_dataframe(dataframe)
 
 
 def load_best_available_library_summary(
+    db_path: Path,
     excel_path: Path,
-    json_dir: Path,
 ) -> Optional[Dict[str, object]]:
+    if db_path.exists():
+        return summarize_database_library(db_path)
     if excel_path.exists():
         return summarize_excel_library(excel_path)
-    if json_dir.exists():
-        return summarize_json_library(json_dir)
     return None
 
 
@@ -240,7 +170,8 @@ def write_markdown_report(
     report_path: Path,
     stage: str,
     input_dir: Optional[Path],
-    json_dir: Path,
+    db_path: Path,
+    tracks_json_path: Optional[Path],
     excel_path: Path,
     analysis_stats: Optional[Dict[str, Any]],
     excel_stats: Optional[Dict[str, Any]],
@@ -262,7 +193,8 @@ def write_markdown_report(
         f"- stage: {stage}",
         f"- success: {str(success).lower()}",
         f"- input_dir: {input_dir if input_dir else ''}",
-        f"- json_dir: {json_dir}",
+        f"- db_path: {db_path}",
+        f"- tracks_json_path: {tracks_json_path if tracks_json_path else 'disabled'}",
         f"- excel_path: {excel_path}",
         f"- report_path: {report_path}",
         f"- total_runtime_seconds: {_format_seconds(cumulative_timings.get('total_runtime_seconds'))}",
@@ -296,8 +228,8 @@ def write_markdown_report(
                 "",
                 "## Excel",
                 "",
-                f"- json_files_seen: {excel_stats.get('json_files', 0)}",
-                f"- rows_added_now: {excel_stats.get('rows_added', 0)}",
+                f"- tracks_seen: {excel_stats.get('tracks_seen', 0)}",
+                f"- rows_written_now: {excel_stats.get('rows_written', 0)}",
                 f"- rows_total: {excel_stats.get('rows_total', 0)}",
             ]
         )
@@ -384,14 +316,6 @@ def write_markdown_report(
 
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-def _find_json_files(directory: Path) -> List[Path]:
-    if not directory.is_dir():
-        return []
-    files = [item for item in directory.rglob("*.json") if item.is_file()]
-    files.sort()
-    return files
 
 
 def _check_broken_beat(genres: List[str]) -> bool:

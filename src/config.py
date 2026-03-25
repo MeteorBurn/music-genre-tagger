@@ -46,6 +46,7 @@ MAX_TAG_GENRES = 3  # Max genres written to tag
 
 # Logs
 LOG_LEVEL = "INFO"  # DEBUG|INFO|WARNING|ERROR|CRITICAL
+WRITE_TRACKS_JSON = True  # Export combined tracks.json snapshot
 
 
 def get_config() -> Dict[str, Any]:
@@ -73,4 +74,5 @@ def get_config() -> Dict[str, Any]:
             "max_rows": None,
         },
         "loglevel": LOG_LEVEL,
+        "write_tracks_json": WRITE_TRACKS_JSON,
     }

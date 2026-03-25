@@ -267,6 +267,7 @@ def run_genre_tagging(excel_path: Path, config: Dict[str, Any]) -> Dict[str, Any
         "skipped": 0,
         "error": 0,
         "already_processed": 0,
+        "status_updates": [],
     }
     total = len(dataframe)
 
@@ -288,6 +289,7 @@ def run_genre_tagging(excel_path: Path, config: Dict[str, Any]) -> Dict[str, Any
         mapped_status, counter_key = _map_status(process_result)
         dataframe.at[index, status_field] = mapped_status
         results[counter_key] += 1
+        results["status_updates"].append((file_path_raw, mapped_status))
 
         if process_result == "success":
             logging.info("[%d/%d] Tagged: %s", index + 1, total, track_name)
