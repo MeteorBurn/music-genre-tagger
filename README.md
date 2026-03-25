@@ -333,8 +333,8 @@ python src/main.py [options]
 | `--convert-to-wav` | Force WAV conversion before inference |
 | `--tag-yes` | Auto-confirm genre tagging without prompt |
 | `--tag-no` | Auto-skip genre tagging without prompt |
-| `--non-interactive` | Disable all prompts (for CI/automation) |
 | `--write-json` | Export `tracks.json` snapshot files (100 MB chunks) |
+| `--non-interactive` | Disable all prompts (for CI/automation) |
 | `--loglevel <level>` | Verbosity: `DEBUG\|INFO\|WARNING\|ERROR\|CRITICAL` |
 
 **Example commands:**
