@@ -189,6 +189,7 @@ Excel formatting applied automatically:
   - `report_path` = `meta_root / "report.md"`
 - `load_models(config, script_dir) -> Dict` — resolves checkpoint, loads MAEST, returns `{"maest": {name: {model, arch, checkpoint, device}}}`.
 - `analyze_audio_file(original_audio_path, models, config) -> Dict` — per-file inference; returns the track payload dict (with `error` key on failure); does NOT write to disk.
+- Analyze timing in logs and reports includes ffmpeg conversion time when conversion is used.
 - `run_analysis_stage(config, script_dir, input_dir, db_path) -> Dict` — calls `init_db`, finds audio, skips existing hashes, runs analysis, calls `upsert_track` per file.
 - `run_excel_stage(config, db_path, excel_path) -> Dict` — delegates to `create_excel_report`.
 - `run_tag_stage(config, db_path, excel_path) -> Dict` — runs `run_genre_tagging`, then calls `update_track_statuses` to sync status back to DB.
@@ -279,6 +280,7 @@ Formats requiring ffmpeg produce a temporary WAV file in the system temp directo
 - Use `pathlib.Path` for all path operations; never use raw string concatenation for paths.
 - Use `logging`, not `print`, for all operational output.
   - `info` for normal progress; `warning` for degraded/partial success; `error` for failures.
+- Keep analyze success logs compact: no genre list in the log line; append ` > .wav [ffmpeg]` when a temporary ffmpeg conversion is used.
 - Per-file errors in loops: log and continue. Never let a single file failure abort the full run.
 - Catch `Exception` explicitly; avoid bare `except`.
 - Include actionable context in error messages (file path, stage name, key).

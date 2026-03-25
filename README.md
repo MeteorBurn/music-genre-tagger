@@ -75,6 +75,8 @@ Your Music Library
                    report.md
 ```
 
+Analyze logs stay compact. If ffmpeg conversion is used, the success line is marked like `track.m4a > .wav [ffmpeg]`, and the reported analysis time includes that conversion step.
+
 ---
 
 ## 📁 Project structure

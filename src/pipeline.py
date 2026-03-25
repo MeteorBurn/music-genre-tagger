@@ -81,7 +81,7 @@ def setup_logging(level: str) -> None:
     log_level = getattr(logging, level.upper(), logging.INFO)
     logging.basicConfig(
         level=log_level,
-        format="%(asctime)s - %(levelname)-8s - %(message)s",
+        format="%(asctime)s - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
@@ -544,6 +544,7 @@ def analyze_audio_file(
             "audio_segment_offset": config["audio_offset"],
             "audio_segment_duration": config["audio_duration"],
         },
+        "_converted_with_ffmpeg": bool(should_convert),
     }
 
     try:
@@ -665,14 +666,15 @@ def run_analysis_stage(
                 )
             else:
                 processed += 1
-                labels = result.get("genres", {}).get("labels", [])
-                genres_text = ", ".join(labels) if labels else "n/a"
+                conversion_suffix = ""
+                if result.get("_converted_with_ffmpeg"):
+                    conversion_suffix = " > .wav [ffmpeg]"
                 logging.info(
-                    "[%d/%d] Analyzed: %s [%s] (time: %.2fs)",
+                    "[%d/%d] Analyzed: %s%s (time: %.2fs)",
                     index,
                     len(files_to_process),
                     audio_path.name,
-                    genres_text,
+                    conversion_suffix,
                     elapsed_seconds,
                 )
         except Exception as exc:
