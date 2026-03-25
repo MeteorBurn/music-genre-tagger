@@ -173,7 +173,7 @@ Excel formatting applied automatically:
 - `run_environment_checks(project_dir, models_dir, checkpoint_filename, checkpoint_path_value) -> bool`
   - Returns `True` only if all checks pass and no restart is required.
   - Hard failures: wrong Python version, missing packages, broken MAEST API, failed SQLite runtime check, invalid checkpoint path, restart required after torch reinstall.
-  - Soft behavior: if NVIDIA GPU found and torch is CPU-only, reinstalls torch from CUDA index and sets `restart_required = True` (returns `False`).
+  - Soft behavior: detects the current platform and CUDA support, resolves compatible `torch` / `torchaudio` versions from pip indexes at runtime, and reinstalls the torch stack if the installed build does not match the detected target.
   - FFmpeg absence is a warning only, not a hard failure.
   - `_check_sqlite_runtime()` runs an in-memory smoke test and verifies `sqlite3` is functional.
 
@@ -253,7 +253,17 @@ Format dispatch table:
 
 - Do not upgrade dependency versions unless explicitly requested.
 - `requirements.txt` pins baseline `torch`, `torchaudio`, `torchvision` without CUDA specifiers.
-- At runtime, `environment.py` detects NVIDIA GPU via `nvidia-smi` and auto-upgrades torch to a CUDA build (`cu121` index) if needed.
+- At runtime, `environment.py` detects NVIDIA GPU via `nvidia-smi`, reads the reported CUDA version, chooses the matching torch wheel index per platform, and resolves the latest compatible `torch` / `torchaudio` pair from that index before installation.
+- Windows selection rules:
+  - CPU: use the default pip index.
+  - GPU CUDA `12.6`: use `https://download.pytorch.org/whl/cu126`
+  - GPU CUDA `12.8`: use `https://download.pytorch.org/whl/cu128`
+  - GPU CUDA `13.0+`: use `https://download.pytorch.org/whl/cu130`
+- Linux selection rules:
+  - CPU: use `https://download.pytorch.org/whl/cpu`
+  - GPU CUDA `12.6`: use `https://download.pytorch.org/whl/cu126`
+  - GPU CUDA `12.8`: use `https://download.pytorch.org/whl/cu128`
+  - GPU CUDA `13.0+`: use the default pip index
 - After a CUDA torch reinstall, one manual rerun is required. This is by design.
 - Do not remove or bypass the torch auto-upgrade logic in `environment.py`.
 

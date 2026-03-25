@@ -11,6 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import List
+from typing import Optional
 from typing import Tuple
 
 
@@ -18,7 +19,15 @@ PACKAGE_IMPORT_MAP = {
     "maest-infer": "maest_infer",
 }
 
-CUDA_WHEEL_INDEX = "https://download.pytorch.org/whl/cu121"
+TORCH_PACKAGE = "torch"
+TORCHAUDIO_PACKAGE = "torchaudio"
+TORCHVISION_PACKAGE = "torchvision"
+DEFAULT_TORCH_STACK_VERSION = "2.11.0"
+
+CUDA_WHEEL_INDEX_CU126 = "https://download.pytorch.org/whl/cu126"
+CUDA_WHEEL_INDEX_CU128 = "https://download.pytorch.org/whl/cu128"
+CUDA_WHEEL_INDEX_CU130 = "https://download.pytorch.org/whl/cu130"
+CPU_WHEEL_INDEX = "https://download.pytorch.org/whl/cpu"
 
 
 def _check_python_version() -> Tuple[bool, str, str]:
@@ -88,7 +97,153 @@ def _has_nvidia_gpu() -> bool:
         return False
 
 
-def _install_torch_stack(use_cuda: bool) -> Tuple[bool, str]:
+def _detect_cuda_version_from_nvidia_smi() -> str:
+    nvidia_smi = shutil.which("nvidia-smi")
+    if not nvidia_smi:
+        return ""
+    try:
+        completed = subprocess.run(
+            [nvidia_smi],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            return ""
+        match = re.search(r"CUDA Version:\s*([0-9]+(?:\.[0-9]+)?)", completed.stdout)
+        if not match:
+            return ""
+        return match.group(1)
+    except Exception:
+        return ""
+
+
+def _version_prefix_matches(version: str, expected_prefix: str) -> bool:
+    if not version:
+        return False
+    version_core = version.split("+", 1)[0]
+    expected_core = expected_prefix.split("+", 1)[0]
+    return version_core.startswith(expected_core)
+
+
+def _parse_cuda_version(cuda_version: str) -> Tuple[int, int]:
+    match = re.match(r"^(\d+)(?:\.(\d+))?", cuda_version.strip())
+    if not match:
+        return 0, 0
+    major = int(match.group(1))
+    minor = int(match.group(2) or "0")
+    return major, minor
+
+
+def _parse_semver_triplet(version: str) -> Tuple[int, int, int]:
+    core = version.strip().split("+", 1)[0]
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)", core)
+    if not match:
+        return 0, 0, 0
+    return int(match.group(1)), int(match.group(2)), int(match.group(3))
+
+
+def _same_major_minor(version_a: str, version_b: str) -> bool:
+    a_major, a_minor, _ = _parse_semver_triplet(version_a)
+    b_major, b_minor, _ = _parse_semver_triplet(version_b)
+    return a_major == b_major and a_minor == b_minor
+
+
+def _load_available_package_versions(
+    package_name: str, index_url: Optional[str]
+) -> List[str]:
+    cmd = [sys.executable, "-m", "pip", "index", "versions", package_name]
+    if index_url:
+        cmd.extend(["--index-url", index_url])
+
+    try:
+        completed = subprocess.run(cmd, check=False, capture_output=True, text=True)
+    except Exception:
+        return []
+
+    if completed.returncode != 0:
+        return []
+
+    output = completed.stdout or ""
+    available_line = ""
+    for line in output.splitlines():
+        if line.strip().startswith("Available versions:"):
+            available_line = line
+            break
+
+    if not available_line:
+        return []
+
+    versions_raw = available_line.split(":", 1)[-1].strip()
+    versions = [value.strip() for value in versions_raw.split(",") if value.strip()]
+    return versions
+
+
+def _resolve_torch_stack_versions(index_url: Optional[str]) -> Tuple[str, str]:
+    torch_versions = _load_available_package_versions(TORCH_PACKAGE, index_url)
+    torchaudio_versions = _load_available_package_versions(
+        TORCHAUDIO_PACKAGE, index_url
+    )
+
+    if not torch_versions or not torchaudio_versions:
+        return DEFAULT_TORCH_STACK_VERSION, DEFAULT_TORCH_STACK_VERSION
+
+    common_versions = sorted(
+        set(torch_versions).intersection(set(torchaudio_versions)),
+        key=_parse_semver_triplet,
+        reverse=True,
+    )
+    if common_versions:
+        selected = common_versions[0]
+        return selected, selected
+
+    torch_sorted = sorted(torch_versions, key=_parse_semver_triplet, reverse=True)
+    torchaudio_sorted = sorted(
+        torchaudio_versions, key=_parse_semver_triplet, reverse=True
+    )
+
+    for torch_version in torch_sorted:
+        for torchaudio_version in torchaudio_sorted:
+            if _same_major_minor(torch_version, torchaudio_version):
+                return torch_version, torchaudio_version
+
+    return torch_sorted[0], torchaudio_sorted[0]
+
+
+def _select_torch_index_url(
+    system_name: str, has_nvidia_gpu: bool, cuda_version: str
+) -> Optional[str]:
+    system = system_name.strip().lower()
+    if not has_nvidia_gpu:
+        if system == "linux":
+            return CPU_WHEEL_INDEX
+        return None
+
+    cuda_major, cuda_minor = _parse_cuda_version(cuda_version)
+    if system == "windows":
+        if cuda_major > 13 or (cuda_major == 13 and cuda_minor >= 0):
+            return CUDA_WHEEL_INDEX_CU130
+        if cuda_major == 12 and cuda_minor >= 8:
+            return CUDA_WHEEL_INDEX_CU128
+        if cuda_major == 12 and cuda_minor >= 6:
+            return CUDA_WHEEL_INDEX_CU126
+        return CUDA_WHEEL_INDEX_CU126
+
+    if system == "linux":
+        if cuda_major > 13 or (cuda_major == 13 and cuda_minor >= 0):
+            return None
+        if cuda_major == 12 and cuda_minor >= 8:
+            return CUDA_WHEEL_INDEX_CU128
+        if cuda_major == 12 and cuda_minor >= 6:
+            return CUDA_WHEEL_INDEX_CU126
+        return CUDA_WHEEL_INDEX_CU126
+
+    return None
+
+
+def _install_torch_stack(
+    index_url: Optional[str], torch_version: str, torchaudio_version: str
+) -> Tuple[bool, str]:
     cmd = [
         sys.executable,
         "-m",
@@ -97,12 +252,12 @@ def _install_torch_stack(use_cuda: bool) -> Tuple[bool, str]:
         "--upgrade",
         "--force-reinstall",
         "--no-cache-dir",
-        "torch",
-        "torchaudio",
-        "torchvision",
+        f"{TORCH_PACKAGE}=={torch_version}",
+        f"{TORCHAUDIO_PACKAGE}=={torchaudio_version}",
+        TORCHVISION_PACKAGE,
     ]
-    if use_cuda:
-        cmd.extend(["--index-url", CUDA_WHEEL_INDEX])
+    if index_url:
+        cmd.extend(["--index-url", index_url])
     try:
         completed = subprocess.run(cmd, check=False, capture_output=True, text=True)
         if completed.returncode == 0:
@@ -145,68 +300,112 @@ def _probe_torch_info() -> Tuple[bool, str, str, bool]:
         return False, "", "", False
 
 
-def _ensure_torch_runtime(has_nvidia_gpu: bool) -> Tuple[bool, bool]:
+def _ensure_torch_runtime(
+    has_nvidia_gpu: bool, cuda_version: str, system_name: str
+) -> Tuple[bool, bool]:
     restart_required = False
+    index_url = _select_torch_index_url(system_name, has_nvidia_gpu, cuda_version)
+    target_torch_version, target_torchaudio_version = _resolve_torch_stack_versions(
+        index_url
+    )
+
+    def _manual_fix_message() -> str:
+        base_cmd = (
+            f"{sys.executable} -m pip install --upgrade --force-reinstall --no-cache-dir "
+            f"{TORCH_PACKAGE}=={target_torch_version} "
+            f"{TORCHAUDIO_PACKAGE}=={target_torchaudio_version} {TORCHVISION_PACKAGE}"
+        )
+        if index_url:
+            return f"{base_cmd} --index-url {index_url}"
+        return base_cmd
+
+    logging.info(
+        "Torch install target: platform=%s, nvidia_gpu=%s, cuda_version=%s, index_url=%s",
+        system_name,
+        has_nvidia_gpu,
+        cuda_version or "unknown",
+        index_url or "default",
+    )
+    logging.info(
+        "Resolved torch targets: torch=%s, torchaudio=%s",
+        target_torch_version,
+        target_torchaudio_version,
+    )
+
     try:
         import torch
+        import torchaudio
+        import torchvision
 
-        torch_cuda_build = bool(torch.version.cuda)
-        if has_nvidia_gpu and not torch_cuda_build:
-            logging.warning(
-                "NVIDIA GPU detected, but CPU-only torch build is installed"
-            )
-            logging.warning("Attempting to install CUDA torch build automatically...")
-            logging.warning(
-                "This may take several minutes. No progress messages will appear during download — this is expected."
-            )
-            install_ok, install_error = _install_torch_stack(use_cuda=True)
-            if not install_ok:
-                logging.error("Failed to install CUDA torch build automatically")
-                if install_error:
-                    logging.error("Installer output: %s", install_error)
-                logging.error(
-                    "Manual fix: %s -m pip install --upgrade torch torchaudio torchvision --index-url %s",
-                    sys.executable,
-                    CUDA_WHEEL_INDEX,
-                )
-                return False, False
-            probe_ok, version, cuda_build, _ = _probe_torch_info()
-            if not probe_ok or not cuda_build or cuda_build == "None":
-                logging.error("CUDA torch build verification failed after installation")
-                logging.error(
-                    "Manual fix: %s -m pip uninstall -y torch torchaudio torchvision",
-                    sys.executable,
-                )
-                logging.error(
-                    "Manual fix: %s -m pip install --upgrade --force-reinstall --no-cache-dir torch torchaudio torchvision --index-url %s",
-                    sys.executable,
-                    CUDA_WHEEL_INDEX,
-                )
-                return False, False
-            logging.warning("CUDA torch build installed successfully: %s", version)
-            logging.warning("Detected CUDA build: %s", cuda_build)
-            logging.warning("Please restart the script to use updated torch build")
-            restart_required = True
-    except Exception:
-        logging.warning(
-            "Torch is not installed. Installing torch stack automatically..."
+        torch_ok = _version_prefix_matches(str(torch.__version__), target_torch_version)
+        torchaudio_ok = _version_prefix_matches(
+            str(torchaudio.__version__), target_torchaudio_version
         )
-        install_ok, install_error = _install_torch_stack(use_cuda=has_nvidia_gpu)
+        torchvision_ok = bool(str(torchvision.__version__).strip())
+        torch_cuda_build = bool(torch.version.cuda)
+
+        needs_reinstall = not (torch_ok and torchaudio_ok and torchvision_ok)
+        if has_nvidia_gpu and not torch_cuda_build:
+            needs_reinstall = True
+
+        if not needs_reinstall:
+            return True, restart_required
+
+        logging.warning(
+            "Installed torch stack does not match required versions/build (torch=%s, torchaudio=%s, torchvision=%s, cuda_build=%s)",
+            torch.__version__,
+            torchaudio.__version__,
+            torchvision.__version__,
+            torch.version.cuda,
+        )
+        logging.warning("Attempting to install compatible torch stack automatically...")
+        logging.warning(
+            "This may take several minutes. No progress messages will appear during download — this is expected."
+        )
+        install_ok, install_error = _install_torch_stack(
+            index_url=index_url,
+            torch_version=target_torch_version,
+            torchaudio_version=target_torchaudio_version,
+        )
         if not install_ok:
             logging.error("Failed to install torch stack automatically")
             if install_error:
                 logging.error("Installer output: %s", install_error)
-            if has_nvidia_gpu:
-                logging.error(
-                    "Manual fix: %s -m pip install --upgrade torch torchaudio torchvision --index-url %s",
-                    sys.executable,
-                    CUDA_WHEEL_INDEX,
-                )
-            else:
-                logging.error(
-                    "Manual fix: %s -m pip install --upgrade torch torchaudio torchvision",
-                    sys.executable,
-                )
+            logging.error("Manual fix: %s", _manual_fix_message())
+            return False, False
+
+        probe_ok, version, cuda_build, _ = _probe_torch_info()
+        if not probe_ok:
+            logging.error("Torch import verification failed after installation")
+            logging.error("Manual fix: %s", _manual_fix_message())
+            return False, False
+
+        if has_nvidia_gpu and (not cuda_build or cuda_build == "None"):
+            logging.error("CUDA torch build verification failed after installation")
+            logging.error("Manual fix: %s", _manual_fix_message())
+            return False, False
+
+        logging.warning(
+            "Torch stack installed successfully: %s (CUDA build: %s)",
+            version,
+            cuda_build,
+        )
+        logging.warning("Please restart the script to use updated torch stack")
+        restart_required = True
+    except Exception:
+        logging.warning(
+            "Torch is not installed. Installing torch stack automatically..."
+        )
+        install_ok, install_error = _install_torch_stack(
+            index_url=index_url,
+            torch_version=target_torch_version,
+            torchaudio_version=target_torchaudio_version,
+        )
+        if not install_ok:
+            logging.error("Failed to install torch stack automatically")
+            if install_error:
+                logging.error("Installer output: %s", install_error)
+            logging.error("Manual fix: %s", _manual_fix_message())
             return False, False
         logging.warning("Torch stack installed successfully")
         logging.warning("Please restart the script to use updated packages")
@@ -264,8 +463,14 @@ def run_environment_checks(
 
     has_nvidia_gpu = _has_nvidia_gpu()
     logging.info("NVIDIA GPU detected: %s", has_nvidia_gpu)
+    cuda_version = _detect_cuda_version_from_nvidia_smi() if has_nvidia_gpu else ""
+    logging.info("Detected CUDA version from nvidia-smi: %s", cuda_version or "unknown")
 
-    torch_setup_ok, torch_restart_required = _ensure_torch_runtime(has_nvidia_gpu)
+    system_name = platform.system()
+
+    torch_setup_ok, torch_restart_required = _ensure_torch_runtime(
+        has_nvidia_gpu, cuda_version, system_name
+    )
     if not torch_setup_ok:
         logging.error("Environment checks failed")
         return False

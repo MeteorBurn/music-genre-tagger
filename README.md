@@ -121,10 +121,17 @@ source .venv/bin/activate
 
 ```bash
 python -m pip install --upgrade pip
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-> 💡 **GPU note:** On first run, the pipeline automatically detects your NVIDIA GPU and installs a matching CUDA torch build (`cu121`). After install, rerun `python src/main.py` once to continue with updated packages.
+> 💡 **Torch auto-setup:** On first run, `environment.py` checks the installed PyTorch stack and can reinstall `torch`, `torchaudio`, and `torchvision` automatically if the current build does not match your machine.
+>
+> - **Windows CPU:** installs from the default pip index
+> - **Windows GPU:** chooses `cu126`, `cu128`, or `cu130` based on the CUDA version reported by `nvidia-smi`
+> - **Linux CPU:** installs from `https://download.pytorch.org/whl/cpu`
+> - **Linux GPU:** chooses `cu126`, `cu128`, or the default pip index for CUDA `13.0+`
+>
+> After an automatic torch reinstall, rerun `python src/main.py` once so the updated packages are picked up.
 
 ---
 
