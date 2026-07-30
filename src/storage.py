@@ -74,6 +74,10 @@ INCOMPATIBLE_SCHEMA_MESSAGE = (
 )
 
 
+class IncompatibleDatabaseError(RuntimeError):
+    pass
+
+
 def init_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     connection = _connect(db_path, allow_fresh_schema=True)
@@ -234,7 +238,7 @@ def _validate_schema_connection(connection: sqlite3.Connection) -> None:
     ).fetchone()
     schema_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
     if not tracks_exists or schema_version != SCHEMA_VERSION:
-        raise RuntimeError(INCOMPATIBLE_SCHEMA_MESSAGE)
+        raise IncompatibleDatabaseError(INCOMPATIBLE_SCHEMA_MESSAGE)
 
 
 def _connect(
@@ -250,7 +254,7 @@ def _connect(
         if tracks_exists:
             _validate_schema_connection(connection)
         elif not allow_fresh_schema:
-            raise RuntimeError(INCOMPATIBLE_SCHEMA_MESSAGE)
+            raise IncompatibleDatabaseError(INCOMPATIBLE_SCHEMA_MESSAGE)
         connection.execute("PRAGMA journal_mode=WAL")
     except Exception:
         connection.close()

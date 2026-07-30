@@ -35,6 +35,7 @@ from report import summarize_database_library
 from report import write_markdown_report
 from storage import export_tracks_json
 from storage import get_existing_hashes
+from storage import IncompatibleDatabaseError
 from storage import init_db
 from storage import upsert_track
 from storage import update_track_statuses
@@ -831,6 +832,7 @@ def run_pipeline(
     success = False
     error_text = ""
     report_status = "running"
+    incompatible_database_failure = False
 
     def refresh_tracks_json() -> None:
         if not config.get("write_json", False):
@@ -841,7 +843,7 @@ def run_pipeline(
 
     def write_current_report() -> None:
         current_library_summary = library_summary
-        if current_library_summary is None and report_status != "failed":
+        if current_library_summary is None and not incompatible_database_failure:
             current_library_summary = load_best_available_library_summary(
                 runtime_paths.db_path,
                 runtime_paths.excel_path,
@@ -905,12 +907,13 @@ def run_pipeline(
         success = True
         report_status = "completed"
     except Exception as exc:
+        incompatible_database_failure = isinstance(exc, IncompatibleDatabaseError)
         error_text = str(exc)
         report_status = "failed"
         logging.error("Pipeline failed: %s", exc)
         logging.debug(traceback.format_exc())
     finally:
-        if report_status != "failed":
+        if not incompatible_database_failure:
             refresh_tracks_json()
         write_current_report()
         logging.info("Report written: %s", runtime_paths.report_path)

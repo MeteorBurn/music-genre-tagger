@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import stat
 import sys
@@ -5,6 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Callable
+from typing import NoReturn
+from typing import Optional
 from unittest.mock import patch
 
 
@@ -15,6 +18,8 @@ from pipeline import run_excel_stage
 from pipeline import run_pipeline
 from pipeline import run_tag_stage
 from storage import export_tracks_json
+from storage import init_db
+from storage import upsert_track
 from storage import validate_db_schema
 
 
@@ -75,6 +80,31 @@ def read_journal_mode(db_path: Path) -> str:
         return str(connection.execute("PRAGMA journal_mode").fetchone()[0])
     finally:
         connection.close()
+
+
+def build_partial_track_payload() -> dict[str, object]:
+    return {
+        "timestamp": "2026-07-30T00:00:00",
+        "hash": "partial-hash",
+        "file": {
+            "path": "C:/Music/partial.flac",
+            "name": "partial",
+            "extension": ".flac",
+            "size": {"megabytes": 1.0, "bytes": 1048576},
+            "duration": {"time": "00:01:00", "seconds": 60.0},
+        },
+        "genres": {
+            "labels": ["House"],
+            "confidences": [0.9],
+            "model": "maest_519l_pytorch",
+        },
+        "analysis_config": {
+            "audio_segment_offsets": [0.0, 15.0, 30.0],
+            "audio_segment_duration": 30.0,
+            "audio_segment_count": 3,
+            "aggregation": "mean",
+        },
+    }
 
 
 class LegacySchemaConsumerTests(unittest.TestCase):
@@ -229,3 +259,62 @@ class LegacySchemaPipelineTests(unittest.TestCase):
             stage="tag",
             write_json=True,
         )
+
+
+class ValidSchemaFailureFinalizationTests(unittest.TestCase):
+    def test_unrelated_failure_refreshes_json_and_database_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_dir = root / "music"
+            output_dir = root / "output"
+            input_dir.mkdir()
+            meta_root = output_dir / input_dir.name
+            report_path = meta_root / "report.md"
+            tracks_json_path = meta_root / "tracks.json"
+            config = {
+                "input_directory": str(input_dir),
+                "output_directory": str(output_dir),
+                "model_file_path": "",
+                "model_key": "",
+                "write_json": True,
+                "tag_mode": "no",
+                "tagger": {},
+            }
+
+            def fail_after_partial_analysis(
+                stage_config: dict[str, object],
+                script_dir: Path,
+                selected_input_dir: Optional[Path],
+                db_path: Path,
+            ) -> NoReturn:
+                init_db(db_path)
+                upsert_track(db_path, build_partial_track_payload())
+                raise RuntimeError("unrelated analysis failure")
+
+            with patch(
+                "pipeline.run_analysis_stage",
+                side_effect=fail_after_partial_analysis,
+            ):
+                exit_code = run_pipeline(
+                    config,
+                    "analyze",
+                    PROJECT_ROOT,
+                    non_interactive=True,
+                )
+
+            self.assertEqual(exit_code, 1)
+            self.assertTrue(tracks_json_path.is_file())
+            tracks_payload = json.loads(
+                tracks_json_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                [track["hash"] for track in tracks_payload["tracks"]],
+                ["partial-hash"],
+            )
+            self.assertTrue(report_path.is_file())
+            report_text = report_path.read_text(encoding="utf-8")
+            self.assertIn("- status: failed", report_text)
+            self.assertIn("- success: false", report_text)
+            self.assertIn("unrelated analysis failure", report_text)
+            self.assertIn("## Library Summary", report_text)
+            self.assertIn("- total_tracks: 1", report_text)
