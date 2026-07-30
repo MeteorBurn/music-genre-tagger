@@ -12,6 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from pipeline import run_excel_stage
+from pipeline import run_pipeline
 from pipeline import run_tag_stage
 from storage import export_tracks_json
 from storage import validate_db_schema
@@ -152,3 +153,79 @@ class LegacySchemaConsumerTests(unittest.TestCase):
                 )
             finally:
                 db_path.chmod(stat.S_IREAD | stat.S_IWRITE)
+
+
+class LegacySchemaPipelineTests(unittest.TestCase):
+    def assert_pipeline_writes_original_schema_error(
+        self, stage: str, write_json: bool
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_dir = root / "music"
+            output_dir = root / "output"
+            input_dir.mkdir()
+            meta_root = output_dir / input_dir.name
+            meta_root.mkdir(parents=True)
+            db_path = meta_root / "tracks.db"
+            report_path = meta_root / "report.md"
+            tracks_json_path = meta_root / "tracks.json"
+            create_legacy_database(db_path)
+            config = {
+                "input_directory": str(input_dir),
+                "output_directory": str(output_dir),
+                "model_file_path": "",
+                "model_key": "",
+                "write_json": write_json,
+                "tag_mode": "ask",
+                "tagger": {},
+            }
+
+            with patch(
+                "pipeline.run_genre_tagging",
+                side_effect=AssertionError("tagger must not run"),
+            ):
+                try:
+                    exit_code = run_pipeline(
+                        config,
+                        stage,
+                        PROJECT_ROOT,
+                        non_interactive=True,
+                    )
+                except Exception as exc:
+                    self.fail(
+                        f"run_pipeline raised {type(exc).__name__}: {exc}"
+                    )
+
+            self.assertEqual(exit_code, 1)
+            self.assertTrue(report_path.is_file())
+            report_text = report_path.read_text(encoding="utf-8")
+            self.assertIn("- status: failed", report_text)
+            self.assertIn("- success: false", report_text)
+            self.assertIn("## Error", report_text)
+            self.assertIn("incompatible with schema version 2", report_text)
+            self.assertIn("move or delete", report_text)
+            self.assertFalse(tracks_json_path.exists())
+
+    def test_excel_legacy_failure_finalizes_with_json_disabled(self) -> None:
+        self.assert_pipeline_writes_original_schema_error(
+            stage="excel",
+            write_json=False,
+        )
+
+    def test_excel_legacy_failure_finalizes_with_json_enabled(self) -> None:
+        self.assert_pipeline_writes_original_schema_error(
+            stage="excel",
+            write_json=True,
+        )
+
+    def test_tag_legacy_failure_finalizes_with_json_disabled(self) -> None:
+        self.assert_pipeline_writes_original_schema_error(
+            stage="tag",
+            write_json=False,
+        )
+
+    def test_tag_legacy_failure_finalizes_with_json_enabled(self) -> None:
+        self.assert_pipeline_writes_original_schema_error(
+            stage="tag",
+            write_json=True,
+        )

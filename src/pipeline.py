@@ -841,7 +841,7 @@ def run_pipeline(
 
     def write_current_report() -> None:
         current_library_summary = library_summary
-        if current_library_summary is None:
+        if current_library_summary is None and report_status != "failed":
             current_library_summary = load_best_available_library_summary(
                 runtime_paths.db_path,
                 runtime_paths.excel_path,
@@ -910,7 +910,8 @@ def run_pipeline(
         logging.error("Pipeline failed: %s", exc)
         logging.debug(traceback.format_exc())
     finally:
-        refresh_tracks_json()
+        if report_status != "failed":
+            refresh_tracks_json()
         write_current_report()
         logging.info("Report written: %s", runtime_paths.report_path)
 
