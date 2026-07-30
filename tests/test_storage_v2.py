@@ -41,6 +41,28 @@ def build_track_payload() -> dict:
 
 
 class StorageV2Tests(unittest.TestCase):
+    def test_creates_and_reopens_schema_v2(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = Path(directory) / "tracks.db"
+            init_db(db_path)
+
+            connection = sqlite3.connect(db_path)
+            try:
+                column_types = {
+                    row[1]: row[2]
+                    for row in connection.execute("PRAGMA table_info(tracks)")
+                }
+                user_version = connection.execute("PRAGMA user_version").fetchone()[0]
+            finally:
+                connection.close()
+
+            self.assertEqual(user_version, 2)
+            self.assertEqual(column_types["audio_segment_offsets"], "TEXT")
+            self.assertEqual(column_types["audio_segment_duration"], "REAL")
+            self.assertEqual(column_types["audio_segment_count"], "INTEGER")
+            self.assertEqual(column_types["aggregation"], "TEXT")
+            init_db(db_path)
+
     def test_round_trips_three_window_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
             db_path = Path(directory) / "tracks.db"
