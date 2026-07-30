@@ -27,8 +27,8 @@ AUDIO_EXTENSIONS = [
 ]  # Formats included in analysis; remove an extension to exclude that format
 
 # Analysis
-AUDIO_OFFSET = 60  # Segment start in seconds
-AUDIO_DURATION = 30  # Segment length in seconds
+AUDIO_WINDOW_DURATION = 30
+AUDIO_WINDOW_POSITIONS = (0.2, 0.5, 0.8)
 SAMPLE_RATE = 16000  # Target sample rate
 NUM_GENRES = 3  # Top-N genres per track
 
@@ -57,8 +57,8 @@ def get_config() -> Dict[str, Any]:
         "max_files": MAX_FILES,
         "write_json": WRITE_JSON,
         "audio_extensions": AUDIO_EXTENSIONS,
-        "audio_offset": AUDIO_OFFSET,
-        "audio_duration": AUDIO_DURATION,
+        "audio_window_duration": AUDIO_WINDOW_DURATION,
+        "audio_window_positions": AUDIO_WINDOW_POSITIONS,
         "sample_rate": SAMPLE_RATE,
         "num_genres": NUM_GENRES,
         "convert_to_wav": CONVERT_TO_WAV,

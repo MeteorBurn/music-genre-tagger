@@ -1,5 +1,7 @@
 # Ignore all directories by default
 */
+!tests/
+!tests/**
 
 # Keep repository source/docs files
 !.gitignore

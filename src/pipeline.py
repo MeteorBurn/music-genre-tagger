@@ -19,6 +19,7 @@ from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
+from typing import Sequence
 from typing import Tuple
 
 import numpy as np
@@ -279,20 +280,44 @@ def build_audio_hash(audio_path: Path) -> str:
     return hashlib.sha1(normalized_path.encode("utf-8")).hexdigest()[:16]
 
 
-def trim_audio_segment(
-    audio: np.ndarray, sample_rate: int, offset_sec: float, duration_sec: float
-) -> np.ndarray:
+def select_audio_windows(
+    audio: np.ndarray,
+    sample_rate: int,
+    window_duration_sec: float,
+    positions: Sequence[float],
+) -> List[Tuple[float, np.ndarray]]:
     if audio is None or len(audio) == 0:
-        return audio
-    start_sample = int(offset_sec * sample_rate)
-    end_sample = start_sample + int(duration_sec * sample_rate)
+        raise ValueError("Audio cannot be empty.")
+    if sample_rate <= 0:
+        raise ValueError("Sample rate must be positive.")
+    if window_duration_sec <= 0:
+        raise ValueError("Window duration must be positive.")
+    if any(position < 0 or position > 1 for position in positions):
+        raise ValueError("Window positions must be between 0 and 1.")
 
-    if start_sample >= len(audio):
-        start_sample = 0
-        end_sample = int(duration_sec * sample_rate)
-    if end_sample > len(audio):
-        end_sample = len(audio)
-    return audio[start_sample:end_sample]
+    audio_duration_sec = len(audio) / sample_rate
+    if audio_duration_sec <= window_duration_sec:
+        return [(0.0, audio)]
+
+    window_samples = max(1, int(window_duration_sec * sample_rate))
+    max_start_sec = audio_duration_sec - window_duration_sec
+    start_samples = {
+        int(
+            max(
+                0.0,
+                min(
+                    position * audio_duration_sec - window_duration_sec / 2,
+                    max_start_sec,
+                ),
+            )
+            * sample_rate
+        )
+        for position in positions
+    }
+    return [
+        (start_sample / sample_rate, audio[start_sample : start_sample + window_samples])
+        for start_sample in sorted(start_samples)
+    ]
 
 
 def convert_audio_to_wav(
