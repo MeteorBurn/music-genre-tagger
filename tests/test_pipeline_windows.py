@@ -39,3 +39,9 @@ class SelectAudioWindowsTests(unittest.TestCase):
     def test_rejects_empty_audio(self):
         with self.assertRaisesRegex(ValueError, "empty"):
             select_audio_windows(np.array([], dtype=np.float32), 16000, 30.0, (0.2, 0.5, 0.8))
+
+    def test_rejects_more_than_three_window_positions(self):
+        audio = np.arange(60 * 10, dtype=np.float32)
+
+        with self.assertRaisesRegex(ValueError, "at most three"):
+            select_audio_windows(audio, 10, 30.0, (0.1, 0.3, 0.5, 0.8))

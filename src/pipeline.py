@@ -292,6 +292,8 @@ def select_audio_windows(
         raise ValueError("Sample rate must be positive.")
     if window_duration_sec <= 0:
         raise ValueError("Window duration must be positive.")
+    if len(positions) > 3:
+        raise ValueError("at most three window positions are supported.")
     if any(position < 0 or position > 1 for position in positions):
         raise ValueError("Window positions must be between 0 and 1.")
 
