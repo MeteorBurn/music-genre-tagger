@@ -502,6 +502,31 @@ def process_predictions(
     return [(labels[index], float(scores_np[index])) for index in idx]
 
 
+def aggregate_window_predictions(
+    window_predictions: Sequence[Tuple[np.ndarray, Sequence[str]]],
+) -> Tuple[np.ndarray, List[str]]:
+    if not window_predictions:
+        raise ValueError("At least one window prediction is required.")
+
+    score_vectors: List[np.ndarray] = []
+    common_labels: Optional[List[str]] = None
+    for scores, labels in window_predictions:
+        score_vector = np.asarray(scores)
+        if score_vector.ndim != 1:
+            raise ValueError("Window prediction scores must be one-dimensional.")
+
+        label_list = list(labels)
+        if len(score_vector) != len(label_list):
+            raise ValueError("Window prediction score count must match label count.")
+        if common_labels is None:
+            common_labels = label_list
+        elif label_list != common_labels:
+            raise ValueError("Window predictions must use the same label vocabulary.")
+        score_vectors.append(score_vector)
+
+    return np.mean(np.stack(score_vectors), axis=0), common_labels or []
+
+
 def process_labels(raw_labels: List[str]) -> List[str]:
     return [label.split("---", 1)[-1] for label in raw_labels]
 
@@ -566,8 +591,10 @@ def analyze_audio_file(
             "model": str(config.get("maest_result_key", DEFAULT_MODEL_KEY)),
         },
         "analysis_config": {
-            "audio_segment_offset": config["audio_offset"],
-            "audio_segment_duration": config["audio_duration"],
+            "audio_segment_offsets": [],
+            "audio_segment_duration": config["audio_window_duration"],
+            "audio_segment_count": 0,
+            "aggregation": "mean",
         },
         "_converted_with_ffmpeg": bool(should_convert),
     }
@@ -586,16 +613,19 @@ def analyze_audio_file(
                 "seconds": duration_seconds,
             }
 
-        audio = trim_audio_segment(
+        windows = select_audio_windows(
             audio,
             config["sample_rate"],
-            config["audio_offset"],
-            config["audio_duration"],
+            config["audio_window_duration"],
+            config["audio_window_positions"],
         )
-        if audio is None or len(audio) < config["sample_rate"] * 0.1:
-            raise ValueError("Audio segment is too short after trimming")
-
-        audio_tensor = torch.from_numpy(audio).float()
+        offsets = [offset for offset, _ in windows]
+        json_data["analysis_config"] = {
+            "audio_segment_offsets": offsets,
+            "audio_segment_duration": config["audio_window_duration"],
+            "audio_segment_count": len(windows),
+            "aggregation": "mean",
+        }
         best_result: Dict[str, Any] = {
             "labels": [],
             "confidences": [],
@@ -605,15 +635,18 @@ def analyze_audio_file(
             top_n = int(config.get("num_genres", 3) or 3)
             model = maest_data["model"]
             device = maest_data["device"]
-            wav = audio_tensor.to(device)
+            window_predictions: List[Tuple[np.ndarray, Sequence[str]]] = []
+            for _, window in windows:
+                wav = torch.from_numpy(window).float().to(device)
+                with torch.no_grad():
+                    scores, labels = model.predict_labels(wav)
+                    if device == "cuda":
+                        torch.cuda.synchronize()
+                window_predictions.append((scores, labels))
 
-            with torch.no_grad():
-                scores, labels = model.predict_labels(wav)
-                if device == "cuda":
-                    torch.cuda.synchronize()
-
-            cleaned_labels = process_labels(list(labels))
-            structured = process_predictions(np.asarray(scores), cleaned_labels, top_n)
+            mean_scores, raw_labels = aggregate_window_predictions(window_predictions)
+            cleaned_labels = process_labels(raw_labels)
+            structured = process_predictions(mean_scores, cleaned_labels, top_n)
             best_result = {
                 "labels": [label for label, _ in structured],
                 "confidences": [round(score, 4) for _, score in structured],
