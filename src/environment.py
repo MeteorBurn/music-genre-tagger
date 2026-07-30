@@ -33,7 +33,7 @@ CPU_WHEEL_INDEX = "https://download.pytorch.org/whl/cpu"
 
 def _check_python_version() -> Tuple[bool, str, str]:
     current = sys.version_info
-    required = (3, 9)
+    required = (3, 10)
     ok = current >= required
     version_str = f"{current.major}.{current.minor}.{current.micro}"
     return ok, version_str, f">= {required[0]}.{required[1]}"

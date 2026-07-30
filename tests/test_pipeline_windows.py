@@ -36,6 +36,40 @@ class SelectAudioWindowsTests(unittest.TestCase):
         self.assertEqual([window[0] for _, window in windows], [0.0, 150.0, 300.0])
         self.assertTrue(all(len(window) == 300 for _, window in windows))
 
+    def test_short_16khz_track_uses_one_unchanged_unpadded_window(self) -> None:
+        sample_rate = 16_000
+        audio = np.arange(10 * sample_rate, dtype=np.float32)
+
+        windows = select_audio_windows(
+            audio, sample_rate, 30.0, (0.2, 0.5, 0.8)
+        )
+
+        self.assertEqual(len(windows), 1)
+        offset, window = windows[0]
+        self.assertEqual(offset, 0.0)
+        self.assertEqual(len(window), len(audio))
+        np.testing.assert_array_equal(window, audio)
+
+    def test_long_16khz_track_slices_at_exact_sample_boundaries(self) -> None:
+        sample_rate = 16_000
+        window_samples = 30 * sample_rate
+        audio = np.arange(60 * sample_rate, dtype=np.float32)
+        expected_starts = [0, 15 * sample_rate, 30 * sample_rate]
+
+        windows = select_audio_windows(
+            audio, sample_rate, 30.0, (0.2, 0.5, 0.8)
+        )
+
+        self.assertEqual(
+            [offset for offset, _ in windows],
+            [0.0, 15.0, 30.0],
+        )
+        for (_, window), start_sample in zip(windows, expected_starts):
+            np.testing.assert_array_equal(
+                window,
+                audio[start_sample : start_sample + window_samples],
+            )
+
     def test_rejects_empty_audio(self):
         with self.assertRaisesRegex(ValueError, "empty"):
             select_audio_windows(np.array([], dtype=np.float32), 16000, 30.0, (0.2, 0.5, 0.8))

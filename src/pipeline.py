@@ -38,6 +38,7 @@ from storage import get_existing_hashes
 from storage import init_db
 from storage import upsert_track
 from storage import update_track_statuses
+from storage import validate_db_schema
 from tagger import run_genre_tagging
 
 try:
@@ -770,6 +771,7 @@ def run_excel_stage(
 ) -> Dict[str, Any]:
     if not db_path.is_file():
         raise RuntimeError(f"Database file not found: {db_path}")
+    validate_db_schema(db_path)
     return create_excel_report(db_path, excel_path)
 
 
@@ -779,6 +781,7 @@ def run_tag_stage(
     if not db_path.is_file():
         raise RuntimeError(f"Database file not found: {db_path}")
 
+    validate_db_schema(db_path)
     tag_stats = run_genre_tagging(excel_path, config["tagger"])
     update_track_statuses(db_path, tag_stats.get("status_updates", []))
     return tag_stats

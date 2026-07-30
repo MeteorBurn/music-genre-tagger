@@ -102,6 +102,8 @@ music-genre-tagger/
 
 ## 🚀 Setup
 
+Python 3.10 or newer is required.
+
 **Step 1 — Create virtual environment:**
 
 ```powershell
