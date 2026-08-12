@@ -80,6 +80,13 @@ class MAESTFeatureExtractor(FeatureExtractionMixin):
         normalized = (logmel - self.mean) / (self.std * 2.0)
         return normalized.transpose(0, 1)
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize only the public preprocessing contract, not torch modules."""
+        output = super().to_dict()
+        output.pop("_spectrogram", None)
+        output.pop("_mel_scale", None)
+        return output
+
     def __call__(
         self,
         raw_speech: Any,

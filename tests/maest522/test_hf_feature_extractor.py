@@ -5,6 +5,7 @@ from unittest import TestCase
 import numpy
 import torch
 from maest_infer.helpers.melspectrogram import MelSpectrogram
+from transformers import AutoFeatureExtractor
 
 from tools.maest522.feature_extraction_maest import MAESTFeatureExtractor
 from tools.maest522.hf_feature_extractor import write_feature_extractor_release
@@ -46,3 +47,10 @@ class HuggingFaceFeatureExtractorTests(TestCase):
             self.assertTrue((output_dir / "preprocessor_config.json").is_file())
             self.assertIn("Apache-2.0", (output_dir / "feature_extraction_maest.py").read_text(encoding="utf-8"))
             self.assertEqual(report["feature_extractor_type"], "MAESTFeatureExtractor")
+            reloaded = AutoFeatureExtractor.from_pretrained(
+                output_dir,
+                trust_remote_code=True,
+                local_files_only=True,
+            )
+            self.assertEqual(type(reloaded).__name__, "MAESTFeatureExtractor")
+            self.assertEqual(reloaded.sampling_rate, 16_000)
