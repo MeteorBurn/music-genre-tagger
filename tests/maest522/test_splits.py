@@ -4,6 +4,7 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase
 
 from tools.maest522.annotation_db import AnnotationStore
+from tools.maest522.confirmed_labels import update_label_goal
 from tools.maest522.constants import NEW_LABELS
 from tools.maest522.splits import (
     TrackIdentity,
@@ -80,6 +81,16 @@ class FrozenSplitTests(TestCase):
                     "VALUES (?, 'unavailable', 'fixture', ?)",
                     (track_id, now),
                 )
+                state = "positive" if (track_index // len(NEW_LABELS)) % 2 == 0 else "negative"
+                connection.execute(
+                    "INSERT INTO confirmed_label_events("
+                    "project_id, track_id, label, state, event_kind, batch_id, "
+                    "note, created_at) VALUES (?, ?, ?, ?, 'trusted_import', "
+                    "NULL, 'fixture', ?)",
+                    (project_id, track_id, NEW_LABELS[label_index], state, now),
+                )
+        for label in NEW_LABELS:
+            update_label_goal(store, project_id, label, 1, 1)
         return store, project_id
 
     def test_freezes_deterministic_group_splits_without_leakage(self) -> None:
@@ -120,3 +131,15 @@ class FrozenSplitTests(TestCase):
             self.assertTrue(
                 any("group=" in issue and "crosses splits" in issue for issue in audit.issues)
             )
+
+    def test_refuses_to_freeze_before_all_confirmed_goals_are_complete(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            store, project_id = self._build_store(Path(temp_dir))
+            with store.connection() as connection:
+                connection.execute(
+                    "DELETE FROM confirmed_label_events WHERE label = ? AND state = 'negative'",
+                    (NEW_LABELS[2],),
+                )
+
+            with self.assertRaisesRegex(RuntimeError, "all label goals"):
+                freeze_group_splits(store, project_id, seed=522)

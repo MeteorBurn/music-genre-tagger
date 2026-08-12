@@ -37,6 +37,7 @@ class TrainingDataTests(TestCase):
                 NEW_LABELS[1]: "negative",
                 NEW_LABELS[2]: "uncertain",
             }
+            row["label_mask"][NEW_LABELS[2]] = False
 
             sample = decode_manifest_row(row, root, require_labels=True)
 
@@ -106,6 +107,12 @@ class TrainingDataTests(TestCase):
             del rows[0]["labels"][NEW_LABELS[2]]
             manifest_path = self._write_manifest(root, rows, audit_digest)
             with self.assertRaisesRegex(ValueError, NEW_LABELS[2]):
+                load_manifest(manifest_path, audit_digest)
+
+            rows[0]["labels"][NEW_LABELS[2]] = "unreviewed"
+            rows[0]["label_mask"][NEW_LABELS[2]] = True
+            manifest_path = self._write_manifest(root, rows, audit_digest)
+            with self.assertRaisesRegex(ValueError, "label_mask conflicts"):
                 load_manifest(manifest_path, audit_digest)
 
     def test_replay_manifest_has_no_new_label_supervision(self) -> None:
@@ -178,6 +185,7 @@ class TrainingDataTests(TestCase):
             "window_offsets_seconds": [5.0, 35.0, 65.0],
             "candidate_roles": {},
             "labels": {label: "negative" for label in NEW_LABELS},
+            "label_mask": {label: True for label in NEW_LABELS},
         }
 
     @staticmethod

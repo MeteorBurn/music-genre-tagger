@@ -23,7 +23,7 @@ WINDOW_SECONDS = 30.0
 WINDOW_POSITIONS = (0.2, 0.5, 0.8)
 PREPROCESSING_VERSION = "maest-infer-0.2.0-mel-16khz-mono-30s-v1"
 REPLAY_SPLITS = ("replay_train", "regression_holdout")
-REVIEWED_STATES = {"positive", "negative", "uncertain"}
+MANIFEST_STATES = {"positive", "negative", "uncertain", "unreviewed"}
 
 
 @dataclass(frozen=True)
@@ -145,11 +145,25 @@ def decode_manifest_row(
     if require_labels:
         if not isinstance(labels, Mapping):
             raise ValueError(f"track {track_id!r} has no completed labels")
+        raw_label_mask = row.get("label_mask")
+        if not isinstance(raw_label_mask, Mapping):
+            raise ValueError(f"track {track_id!r} has no explicit label_mask")
         for index, label in enumerate(NEW_LABELS):
             state = labels.get(label)
-            if state not in REVIEWED_STATES:
+            if state not in MANIFEST_STATES:
                 raise ValueError(
-                    f"track {track_id!r} has no completed state for {label}"
+                    f"track {track_id!r} has no manifest state for {label}"
+                )
+            mask_value = raw_label_mask.get(label)
+            if mask_value not in {0, 1, False, True}:
+                raise ValueError(
+                    f"track {track_id!r} has invalid label_mask for {label}"
+                )
+            expected_mask = state in {"positive", "negative"}
+            if bool(mask_value) != expected_mask:
+                raise ValueError(
+                    f"track {track_id!r} label_mask conflicts with {state} "
+                    f"state for {label}"
                 )
             if state == "positive":
                 targets[index] = 1.0

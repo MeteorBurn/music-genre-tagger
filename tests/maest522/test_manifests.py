@@ -7,17 +7,24 @@ from unittest import TestCase
 from tools.maest522.annotation_db import AnnotationStore
 from tools.maest522.constants import NEW_LABELS
 from tools.maest522.manifests import export_training_manifest
-from tools.maest522.queues import create_round
 
 
 class ManifestExportTests(TestCase):
-    def test_exports_latest_complete_review_without_private_path(self) -> None:
+    def test_exports_latest_confirmed_states_masks_and_no_private_path(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             store = AnnotationStore(root / "annotations.db")
             store.initialize()
             project_id = store.create_project("manifest-test")
             now = datetime.now(timezone.utc).isoformat()
+            split_states = (
+                ("train", "positive"),
+                ("train", "negative"),
+                ("val", "positive"),
+                ("val", "negative"),
+                ("test", "positive"),
+                ("test", "negative"),
+            )
             with store.connection() as connection:
                 connection.execute(
                     "UPDATE projects SET split_frozen_at = ? WHERE id = ?",
@@ -29,33 +36,68 @@ class ManifestExportTests(TestCase):
                     ") VALUES (?, 'folder', 'seed', 'positive_candidate', ?)",
                     (project_id, now),
                 )
-                track_cursor = connection.execute(
+                for index, (split, annotation_state) in enumerate(split_states):
+                    cursor = connection.execute(
+                        "INSERT INTO tracks("
+                        "project_id, path, exact_sha256, duration_seconds, group_id, "
+                        "split, created_at) VALUES (?, ?, ?, 100, ?, ?, ?)",
+                        (
+                            project_id,
+                            str(root / "private" / f"coverage-{index}.wav"),
+                            f"{index + 1:064x}",
+                            f"{index + 101:064x}",
+                            split,
+                            now,
+                        ),
+                    )
+                    track_id = int(cursor.lastrowid)
+                    for label in NEW_LABELS:
+                        connection.execute(
+                            "INSERT INTO confirmed_label_events("
+                            "project_id, track_id, label, state, event_kind, "
+                            "batch_id, note, created_at) VALUES (?, ?, ?, ?, "
+                            "'trusted_import', NULL, 'coverage', ?)",
+                            (project_id, track_id, label, annotation_state, now),
+                        )
+
+                partial_cursor = connection.execute(
                     "INSERT INTO tracks("
                     "project_id, path, exact_sha256, duration_seconds, group_id, "
-                    "split, created_at"
-                    ") VALUES (?, ?, ?, 100, ?, 'train', ?)",
+                    "split, created_at) VALUES (?, ?, ?, 100, ?, 'train', ?)",
                     (
                         project_id,
-                        str(root / "private" / "track.wav"),
+                        str(root / "private" / "partial.wav"),
                         "a" * 64,
                         "b" * 64,
                         now,
                     ),
                 )
+                partial_track_id = int(partial_cursor.lastrowid)
                 connection.execute(
                     "INSERT INTO track_sources(track_id, source_id, suggested_label) "
                     "VALUES (?, ?, ?)",
-                    (track_cursor.lastrowid, source_cursor.lastrowid, NEW_LABELS[0]),
+                    (partial_track_id, source_cursor.lastrowid, NEW_LABELS[0]),
                 )
+                for label, annotation_state in (
+                    (NEW_LABELS[0], "negative"),
+                    (NEW_LABELS[0], "positive"),
+                    (NEW_LABELS[1], "negative"),
+                ):
+                    connection.execute(
+                        "INSERT INTO confirmed_label_events("
+                        "project_id, track_id, label, state, event_kind, batch_id, "
+                        "note, created_at) VALUES (?, ?, ?, ?, 'correction', "
+                        "NULL, 'latest wins', ?)",
+                        (
+                            project_id,
+                            partial_track_id,
+                            label,
+                            annotation_state,
+                            now,
+                        ),
+                    )
 
-            round_summary = create_round(store, project_id, round_number=1)
-            queue_item_id = round_summary.queue_item_ids[0]
-            store.append_annotation(queue_item_id, NEW_LABELS[0], "negative")
-            store.append_annotation(queue_item_id, NEW_LABELS[0], "positive")
-            store.append_annotation(queue_item_id, NEW_LABELS[1], "negative")
-            store.append_annotation(queue_item_id, NEW_LABELS[2], "uncertain")
             output_path = root / "export" / "training.jsonl"
-
             report = export_training_manifest(
                 store,
                 project_id,
@@ -67,25 +109,38 @@ class ManifestExportTests(TestCase):
                 json.loads(line)
                 for line in output_path.read_text(encoding="utf-8").splitlines()
             ]
-            self.assertEqual(report.rows_written, 1)
-            self.assertEqual(len(rows), 1)
-            self.assertNotIn("path", rows[0])
-            self.assertEqual(rows[0]["track_id"], "sha256:" + "a" * 64)
-            self.assertEqual(rows[0]["group_id"], "group:" + "b" * 64)
-            self.assertEqual(rows[0]["window_offsets_seconds"], [5.0, 35.0, 65.0])
+            partial = next(row for row in rows if row["track_id"] == "sha256:" + "a" * 64)
+            self.assertEqual(report.rows_written, 7)
+            self.assertTrue(all("path" not in row for row in rows))
+            self.assertEqual(partial["group_id"], "group:" + "b" * 64)
+            self.assertEqual(partial["window_offsets_seconds"], [5.0, 35.0, 65.0])
             self.assertEqual(
-                rows[0]["labels"],
+                partial["labels"],
                 {
                     NEW_LABELS[0]: "positive",
                     NEW_LABELS[1]: "negative",
-                    NEW_LABELS[2]: "uncertain",
+                    NEW_LABELS[2]: "unreviewed",
                 },
             )
             self.assertEqual(
-                rows[0]["candidate_roles"],
+                partial["label_mask"],
+                {
+                    NEW_LABELS[0]: True,
+                    NEW_LABELS[1]: True,
+                    NEW_LABELS[2]: False,
+                },
+            )
+            self.assertEqual(
+                partial["candidate_roles"],
                 {NEW_LABELS[0]: "positive_candidate"},
             )
-            summary_path = output_path.with_name("dataset_summary.json")
-            summary = json.loads(summary_path.read_text(encoding="utf-8"))
-            self.assertEqual(summary["rows_by_split"], {"train": 1, "val": 0, "test": 0})
+            summary = json.loads(
+                output_path.with_name("dataset_summary.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(
+                summary["rows_by_split"],
+                {"train": 3, "val": 2, "test": 2},
+            )
             self.assertEqual(len(summary["split_audit_sha256"]), 64)

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .annotation_db import AnnotationStore
+from .confirmed_labels import current_confirmed_states, get_label_progress
 
 
 @dataclass(frozen=True)
@@ -71,8 +72,24 @@ def fingerprint_project(
     project_id: int,
     fpcalc_path: Path,
 ) -> FingerprintSummary:
-    """Fingerprint unaudited project tracks and persist explicit outcomes."""
+    """Fingerprint supervised tracks after every confirmed-label goal is met."""
+    incomplete = [
+        progress.label
+        for progress in get_label_progress(store, project_id)
+        if not progress.complete
+    ]
+    if incomplete:
+        raise RuntimeError(
+            "Cannot fingerprint before all label goals are complete: "
+            + ", ".join(incomplete)
+        )
     with store.connection() as connection:
+        current = current_confirmed_states(connection, project_id)
+        supervised_ids = {
+            track_id
+            for (track_id, _label), state in current.items()
+            if state in {"positive", "negative"}
+        }
         rows = connection.execute(
             "SELECT tracks.id, tracks.path "
             "FROM tracks "
@@ -84,6 +101,7 @@ def fingerprint_project(
             "ORDER BY tracks.id",
             (project_id,),
         ).fetchall()
+    rows = [row for row in rows if int(row["id"]) in supervised_ids]
 
     counts = {"available": 0, "unavailable": 0, "error": 0}
     for row in rows:

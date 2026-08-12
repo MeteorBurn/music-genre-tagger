@@ -7,6 +7,8 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from tools.maest522.annotation_db import AnnotationStore
+from tools.maest522.confirmed_labels import update_label_goal
+from tools.maest522.constants import NEW_LABELS
 from tools.maest522.fingerprints import (
     FingerprintResult,
     calculate_fingerprint,
@@ -67,7 +69,7 @@ class FingerprintTests(TestCase):
             now = datetime.now(timezone.utc).isoformat()
             with store.connection() as connection:
                 for track_index in range(2):
-                    connection.execute(
+                    cursor = connection.execute(
                         "INSERT INTO tracks("
                         "project_id, path, exact_sha256, duration_seconds, created_at"
                         ") VALUES (?, ?, ?, 180, ?)",
@@ -78,6 +80,22 @@ class FingerprintTests(TestCase):
                             now,
                         ),
                     )
+                    for label in NEW_LABELS:
+                        connection.execute(
+                            "INSERT INTO confirmed_label_events("
+                            "project_id, track_id, label, state, event_kind, "
+                            "batch_id, note, created_at) VALUES (?, ?, ?, ?, "
+                            "'trusted_import', NULL, 'fixture', ?)",
+                            (
+                                project_id,
+                                int(cursor.lastrowid),
+                                label,
+                                "positive" if track_index == 0 else "negative",
+                                now,
+                            ),
+                        )
+            for label in NEW_LABELS:
+                update_label_goal(store, project_id, label, 1, 1)
 
             summary = fingerprint_project(
                 store,
@@ -101,3 +119,12 @@ class FingerprintTests(TestCase):
             self.assertEqual(tracks[0][0], "fingerprint-a")
             self.assertIsNone(tracks[1][0])
             self.assertEqual(audit_statuses, ["available", "unavailable"])
+
+    def test_refuses_to_run_before_all_label_goals_are_complete(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            store = AnnotationStore(Path(temp_dir) / "annotations.db")
+            store.initialize()
+            project_id = store.create_project("incomplete")
+
+            with self.assertRaisesRegex(RuntimeError, "all label goals"):
+                fingerprint_project(store, project_id, Path("fpcalc"))

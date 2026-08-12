@@ -12,6 +12,7 @@ import numpy
 from iterstrat.ml_stratifiers import MultilabelStratifiedShuffleSplit
 
 from .annotation_db import AnnotationStore
+from .confirmed_labels import current_confirmed_states, get_label_progress
 from .constants import NEW_LABELS, SPLITS
 
 
@@ -133,11 +134,18 @@ def _load_existing_summary(
     project_id: int,
 ) -> SplitSummary:
     with store.connection() as connection:
+        current = current_confirmed_states(connection, project_id)
+        supervised_ids = {
+            track_id
+            for (track_id, _label), state in current.items()
+            if state in {"positive", "negative"}
+        }
         rows = connection.execute(
             "SELECT id, group_id, split FROM tracks "
             "WHERE project_id = ? ORDER BY id",
             (project_id,),
         ).fetchall()
+    rows = [row for row in rows if int(row["id"]) in supervised_ids]
     if any(row["group_id"] is None or row["split"] is None for row in rows):
         raise RuntimeError("Frozen project has incomplete split assignments.")
     assignments = {int(row["id"]): str(row["split"]) for row in rows}
@@ -195,30 +203,45 @@ def freeze_group_splits(
     if store.is_split_frozen(project_id):
         return _load_existing_summary(store, project_id)
 
+    incomplete = [
+        progress.label
+        for progress in get_label_progress(store, project_id)
+        if not progress.complete
+    ]
+    if incomplete:
+        raise RuntimeError(
+            "Cannot freeze splits before all label goals are complete: "
+            + ", ".join(incomplete)
+        )
+
     with store.connection() as connection:
+        current = current_confirmed_states(connection, project_id)
+        supervised_ids = {
+            track_id
+            for (track_id, _label), state in current.items()
+            if state in {"positive", "negative"}
+        }
         rows = connection.execute(
             "SELECT id, exact_sha256, acoustic_fingerprint, artist, release_id "
             "FROM tracks WHERE project_id = ? ORDER BY id",
             (project_id,),
         ).fetchall()
-        unaudited = connection.execute(
-            "SELECT tracks.id FROM tracks "
-            "WHERE tracks.project_id = ? "
-            "AND tracks.acoustic_fingerprint IS NULL "
-            "AND NOT EXISTS ("
-            "    SELECT 1 FROM fingerprint_audit "
-            "    WHERE fingerprint_audit.track_id = tracks.id "
-            "    AND fingerprint_audit.status IN ('unavailable', 'error')"
-            ") ORDER BY tracks.id",
+        audit_rows = connection.execute(
+            "SELECT track_id, status FROM fingerprint_audit "
+            "WHERE track_id IN (SELECT id FROM tracks WHERE project_id = ?)",
             (project_id,),
         ).fetchall()
-        label_rows = connection.execute(
-            "SELECT track_sources.track_id, track_sources.suggested_label "
-            "FROM track_sources "
-            "JOIN tracks ON tracks.id = track_sources.track_id "
-            "WHERE tracks.project_id = ? AND track_sources.suggested_label <> ''",
-            (project_id,),
-        ).fetchall()
+    rows = [row for row in rows if int(row["id"]) in supervised_ids]
+    audited_status = {
+        int(row["track_id"]): str(row["status"])
+        for row in audit_rows
+    }
+    unaudited = [
+        row
+        for row in rows
+        if row["acoustic_fingerprint"] is None
+        and audited_status.get(int(row["id"])) not in {"unavailable", "error"}
+    ]
 
     if not rows:
         raise ValueError("Cannot freeze splits for an empty annotation project.")
@@ -241,18 +264,19 @@ def freeze_group_splits(
     groups_by_track = build_duplicate_groups(identities)
     group_ids = sorted(set(groups_by_track.values()))
     group_index = {group_id: index for index, group_id in enumerate(group_ids)}
-    labels_by_track: dict[int, set[str]] = {}
-    for row in label_rows:
-        labels_by_track.setdefault(int(row["track_id"]), set()).add(
-            str(row["suggested_label"])
-        )
-    label_matrix = numpy.zeros((len(group_ids), len(NEW_LABELS)), dtype=numpy.int8)
+    label_matrix = numpy.zeros(
+        (len(group_ids), len(NEW_LABELS) * 2),
+        dtype=numpy.int8,
+    )
     for row in rows:
         track_id = int(row["id"])
         group_id = groups_by_track[str(track_id)]
         for label_index, label in enumerate(NEW_LABELS):
-            if label in labels_by_track.get(track_id, set()):
-                label_matrix[group_index[group_id], label_index] = 1
+            state = current.get((track_id, label))
+            if state == "positive":
+                label_matrix[group_index[group_id], label_index * 2] = 1
+            elif state == "negative":
+                label_matrix[group_index[group_id], label_index * 2 + 1] = 1
 
     split_by_group_index = _split_group_indices(label_matrix, seed)
     split_by_group = {
@@ -282,11 +306,18 @@ def audit_split_leakage(
 ) -> LeakageAudit:
     """Audit group and identity signals for cross-split leakage."""
     with store.connection() as connection:
+        current = current_confirmed_states(connection, project_id)
+        supervised_ids = {
+            track_id
+            for (track_id, _label), state in current.items()
+            if state in {"positive", "negative"}
+        }
         rows = connection.execute(
             "SELECT id, exact_sha256, acoustic_fingerprint, artist, release_id, "
             "group_id, split FROM tracks WHERE project_id = ? ORDER BY id",
             (project_id,),
         ).fetchall()
+    rows = [row for row in rows if int(row["id"]) in supervised_ids]
 
     issues: list[str] = []
     signal_splits: dict[tuple[str, str], set[str]] = {}
