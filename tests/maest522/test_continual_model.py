@@ -133,6 +133,14 @@ class ContinualModelTests(TestCase):
             )
         self.assertFalse(any(name.startswith("backbone.blocks.7.") for name in stage_three))
 
+    def test_classifier_normalization_uses_public_ast_epsilon(self) -> None:
+        backbone = FakeMaestBackbone()
+        backbone.head[0] = nn.LayerNorm(4, eps=1e-5)
+
+        model = ContinualMaest522(backbone, build_expanded_state_dict())
+
+        self.assertEqual(model.head_norm.eps, 1e-6)
+
     @staticmethod
     def _trainable_names(model: nn.Module) -> set[str]:
         return {

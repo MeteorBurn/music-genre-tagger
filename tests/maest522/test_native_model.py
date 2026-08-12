@@ -33,6 +33,7 @@ class NativeModelTests(TestCase):
             )
             original.head[1] = torch.nn.Linear(768, 522)
             original.head_dist = torch.nn.Linear(768, 522)
+            original.head[0].eps = 1e-6
             original.labels = [str(index) for index in range(522)]
             original.load_state_dict(expanded, strict=True)
             original.eval()

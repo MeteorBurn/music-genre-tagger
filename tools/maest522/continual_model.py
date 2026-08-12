@@ -65,6 +65,8 @@ class ContinualMaest522(nn.Module):
         if not isinstance(backbone_head, nn.Sequential) or len(backbone_head) < 1:
             raise ValueError("MAEST backbone must expose head[0] normalization")
         self.head_norm = deepcopy(backbone_head[0])
+        if isinstance(self.head_norm, nn.LayerNorm):
+            self.head_norm.eps = 1e-6
 
         feature_count = int(expanded_state_dict["head.1.weight"].shape[1])
         self.legacy_head = nn.Linear(feature_count, LEGACY_LABEL_COUNT)

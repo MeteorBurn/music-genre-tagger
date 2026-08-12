@@ -56,6 +56,8 @@ def get_maest_522(
         raise ValueError("installed MAEST model does not expose head[1]")
     model.head[1] = nn.Linear(768, 522)
     model.head_dist = nn.Linear(768, 522)
+    if isinstance(model.head[0], nn.LayerNorm):
+        model.head[0].eps = 1e-6
     model.num_classes = 522
     model.labels = list(build_522_labels(load_official_519_labels()))
     state = load_native_state(checkpoint_path)
