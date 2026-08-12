@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
-from .constants import SCHEMA_VERSION
+from .constants import NEW_LABELS, REVIEW_STATES, SCHEMA_VERSION
 
 
 SCHEMA_SQL = """
@@ -69,6 +69,29 @@ CREATE TABLE IF NOT EXISTS queue_items (
     UNIQUE(project_id, track_id)
 );
 
+CREATE TABLE IF NOT EXISTS queue_rounds (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    round_number INTEGER NOT NULL CHECK(round_number > 0),
+    split TEXT NOT NULL CHECK(split IN ('train', 'val', 'test')),
+    acquisition_kind TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(project_id, round_number, split)
+);
+
+CREATE TABLE IF NOT EXISTS queue_credits (
+    queue_item_id INTEGER NOT NULL REFERENCES queue_items(id) ON DELETE CASCADE,
+    label TEXT NOT NULL,
+    candidate_role TEXT NOT NULL CHECK(
+        candidate_role IN (
+            'positive_candidate',
+            'hard_negative_candidate',
+            'unlabeled_pool'
+        )
+    ),
+    PRIMARY KEY(queue_item_id, label)
+);
+
 CREATE TABLE IF NOT EXISTS annotation_events (
     id INTEGER PRIMARY KEY,
     queue_item_id INTEGER NOT NULL REFERENCES queue_items(id) ON DELETE CASCADE,
@@ -94,6 +117,10 @@ CREATE INDEX IF NOT EXISTS idx_tracks_split ON tracks(project_id, split);
 CREATE INDEX IF NOT EXISTS idx_sources_project ON sources(project_id);
 CREATE INDEX IF NOT EXISTS idx_queue_project_round
     ON queue_items(project_id, round_number);
+CREATE INDEX IF NOT EXISTS idx_queue_rounds_project_split
+    ON queue_rounds(project_id, split, round_number);
+CREATE INDEX IF NOT EXISTS idx_queue_credits_label
+    ON queue_credits(label, candidate_role);
 CREATE INDEX IF NOT EXISTS idx_annotation_queue_label
     ON annotation_events(queue_item_id, label, id);
 """
@@ -188,3 +215,53 @@ class AnnotationStore:
         if row is None:
             raise ValueError(f"Unknown annotation project ID: {project_id}")
         return row["split_frozen_at"] is not None
+
+    def append_annotation(
+        self,
+        queue_item_id: int,
+        label: str,
+        state: str,
+        note: str = "",
+    ) -> int:
+        """Append one immutable annotation event and return its row ID."""
+        if label not in NEW_LABELS:
+            raise ValueError(f"Unknown MAEST 522 extension label: {label}")
+        if state not in REVIEW_STATES:
+            raise ValueError(f"Unknown annotation state: {state}")
+        created_at = datetime.now(timezone.utc).isoformat()
+        with self.connection() as connection:
+            queue_item = connection.execute(
+                "SELECT id FROM queue_items WHERE id = ?",
+                (queue_item_id,),
+            ).fetchone()
+            if queue_item is None:
+                raise ValueError(f"Unknown annotation queue item ID: {queue_item_id}")
+            cursor = connection.execute(
+                "INSERT INTO annotation_events("
+                "queue_item_id, label, state, note, created_at"
+                ") VALUES (?, ?, ?, ?, ?)",
+                (queue_item_id, label, state, note.strip(), created_at),
+            )
+        return int(cursor.lastrowid)
+
+    def current_annotations(self, queue_item_id: int) -> dict[str, dict[str, str]]:
+        """Return the latest event per extension label for one queue item."""
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT events.label, events.state, events.note, events.created_at "
+                "FROM annotation_events AS events "
+                "JOIN ("
+                "    SELECT label, MAX(id) AS latest_id "
+                "    FROM annotation_events WHERE queue_item_id = ? GROUP BY label"
+                ") AS latest ON latest.latest_id = events.id "
+                "ORDER BY events.label",
+                (queue_item_id,),
+            ).fetchall()
+        return {
+            str(row["label"]): {
+                "state": str(row["state"]),
+                "note": str(row["note"]),
+                "created_at": str(row["created_at"]),
+            }
+            for row in rows
+        }
