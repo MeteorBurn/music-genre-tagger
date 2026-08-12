@@ -49,6 +49,15 @@ class AudioMetadata:
     release_id: str | None
 
 
+@dataclass(frozen=True)
+class AudioIdentity:
+    path: Path
+    exact_sha256: str
+    duration_seconds: float
+    artist: str | None
+    release_id: str | None
+
+
 def discover_audio_files(folder: Path) -> list[Path]:
     """Return supported audio files below a folder in deterministic order."""
     resolved_folder = Path(folder).resolve()
@@ -104,6 +113,23 @@ def read_audio_metadata(audio_path: Path) -> AudioMetadata:
         ("musicbrainz_albumid", "barcode", "album"),
     )
     return AudioMetadata(duration_seconds, artist, release_id)
+
+
+def inspect_audio_identity(audio_path: Path) -> AudioIdentity:
+    """Inspect one supported audio file without writing annotation state."""
+    resolved_path = Path(audio_path).resolve()
+    if not resolved_path.is_file():
+        raise ValueError(f"Audio file does not exist: {resolved_path}")
+    if resolved_path.suffix.lower() not in SUPPORTED_AUDIO_EXTENSIONS:
+        raise ValueError(f"Unsupported audio extension: {resolved_path.suffix}")
+    metadata = read_audio_metadata(resolved_path)
+    return AudioIdentity(
+        path=resolved_path,
+        exact_sha256=stream_sha256(resolved_path),
+        duration_seconds=metadata.duration_seconds,
+        artist=metadata.artist,
+        release_id=metadata.release_id,
+    )
 
 
 def _resolve_source(source_path: Path) -> tuple[str, list[Path]]:
@@ -168,8 +194,7 @@ def import_source(
                 )
                 continue
             try:
-                exact_sha256 = stream_sha256(audio_path)
-                metadata = read_audio_metadata(audio_path)
+                identity = inspect_audio_identity(audio_path)
                 track_cursor = connection.execute(
                     "INSERT OR IGNORE INTO tracks("
                     "project_id, path, exact_sha256, duration_seconds, artist, "
@@ -177,11 +202,11 @@ def import_source(
                     ") VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (
                         project_id,
-                        str(audio_path),
-                        exact_sha256,
-                        metadata.duration_seconds,
-                        metadata.artist,
-                        metadata.release_id,
+                        str(identity.path),
+                        identity.exact_sha256,
+                        identity.duration_seconds,
+                        identity.artist,
+                        identity.release_id,
                         imported_at,
                     ),
                 )
@@ -189,7 +214,7 @@ def import_source(
                 track_row = connection.execute(
                     "SELECT id FROM tracks "
                     "WHERE project_id = ? AND exact_sha256 = ?",
-                    (project_id, exact_sha256),
+                    (project_id, identity.exact_sha256),
                 ).fetchone()
                 if track_row is None:
                     raise RuntimeError(f"Imported track was not persisted: {audio_path}")
