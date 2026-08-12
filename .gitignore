@@ -2,6 +2,11 @@
 */
 !tests/
 !tests/**
+!tools/
+!tools/__init__.py
+!tools/annotation_ui.py
+!tools/maest522/
+!tools/maest522/**
 
 # Keep repository source/docs files
 !.gitignore
