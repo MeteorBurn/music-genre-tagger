@@ -33,7 +33,7 @@ async function api(path, options = {}) {
 }
 
 function requireProject() {
-  if (!state.projectId) throw new Error("Create or open a project first.");
+  if (!state.projectId) throw new Error("Сначала создайте или откройте проект.");
   return state.projectId;
 }
 
@@ -227,6 +227,11 @@ byId("create-round").addEventListener("click", async () => {
       }),
     }));
     await loadNext();
+  } catch (error) { showSetup({ error: error.message }); }
+});
+byId("export-manifest").addEventListener("click", async () => {
+  try {
+    showSetup(await api(`/api/projects/${requireProject()}/export`));
   } catch (error) { showSetup({ error: error.message }); }
 });
 

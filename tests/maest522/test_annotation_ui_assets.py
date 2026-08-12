@@ -32,6 +32,8 @@ class AnnotationUiAssetTests(TestCase):
             self.assertIn(keyboard_code, javascript)
         self.assertIn('accept=".m3u,.m3u8"', html)
         self.assertIn("base-directory", html)
+        self.assertIn("export-manifest", html)
+        self.assertIn("/export", javascript)
         self.assertIn("audio", html)
         self.assertIn("0.2", javascript)
         self.assertIn("0.5", javascript)
