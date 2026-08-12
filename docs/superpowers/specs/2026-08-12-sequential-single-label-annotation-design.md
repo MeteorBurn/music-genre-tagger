@@ -13,14 +13,27 @@ The operator instead selects tracks in an external listening application and
 produces trusted positive and negative M3U playlists. They need to finish one
 label without switching listening context every 100 tracks:
 
-1. `Electronic---DeepTech-Minimal`
+1. `Electronic---Minimal-Deep-Tech`
 2. `Electronic---Microhouse`
 3. `Electronic---RoMinimal`
 
 The current live annotation project contains 200 tracks, no queue rounds, and
-no annotation events. Source 1 is a trusted 100-track positive DeepTech-Minimal
-playlist and source 2 is a trusted 100-track negative DeepTech-Minimal
+no annotation events. Source 1 is a trusted 100-track positive Minimal-Deep-Tech
+playlist and source 2 is a trusted 100-track negative Minimal-Deep-Tech
 playlist.
+
+## Public Label Contract
+
+The three appended labels, in fixed classifier-row order, are:
+
+1. `Electronic---Microhouse` at index 519
+2. `Electronic---RoMinimal` at index 520
+3. `Electronic---Minimal-Deep-Tech` at index 521
+
+This exact spelling is global across the native checkpoint, Hugging Face
+configuration, UI, SQLite v2 ledger, manifests, training, evaluation, model and
+dataset cards, and release reports. The original 519 label strings and row
+order remain unchanged.
 
 ## Goals
 
@@ -120,12 +133,16 @@ transaction:
 
 For the current database, the explicit conversion mapping is:
 
-- source 1 -> `Electronic---DeepTech-Minimal = positive`
-- source 2 -> `Electronic---DeepTech-Minimal = negative`
+- source 1 -> `Electronic---Minimal-Deep-Tech = positive`
+- source 2 -> `Electronic---Minimal-Deep-Tech = negative`
 
 The migration must verify that both sources belong to project 1, each links to
 exactly 100 unique tracks, their track sets do not overlap, all files exist,
-and their suggested label is DeepTech-Minimal before writing any event.
+and their persisted v1 suggested label is the legacy
+`Electronic---DeepTech-Minimal` value before writing any event. This explicit
+v1 migration boundary maps that stored value to
+`Electronic---Minimal-Deep-Tech`; the legacy value is not accepted by the v2
+API, manifests, model metadata, training pipeline, or publication artifacts.
 
 ## Trusted Playlist Import
 
