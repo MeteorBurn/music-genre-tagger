@@ -1,0 +1,2 @@
+scikit-learn>=1.5,<2
+safetensors>=0.4,<1
