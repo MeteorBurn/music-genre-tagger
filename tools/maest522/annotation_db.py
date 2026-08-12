@@ -2,6 +2,7 @@
 
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
@@ -157,3 +158,33 @@ class AnnotationStore:
         if row is None:
             raise RuntimeError("Annotation database has no schema version.")
         return int(row["version"])
+
+    def create_project(self, name: str) -> int:
+        """Create a project or return the existing project with the same name."""
+        normalized_name = name.strip()
+        if not normalized_name:
+            raise ValueError("Project name must not be empty.")
+        created_at = datetime.now(timezone.utc).isoformat()
+        with self.connection() as connection:
+            connection.execute(
+                "INSERT OR IGNORE INTO projects(name, created_at) VALUES (?, ?)",
+                (normalized_name, created_at),
+            )
+            row = connection.execute(
+                "SELECT id FROM projects WHERE name = ?",
+                (normalized_name,),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError(f"Could not create annotation project: {normalized_name}")
+        return int(row["id"])
+
+    def is_split_frozen(self, project_id: int) -> bool:
+        """Return whether a project has immutable split assignments."""
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT split_frozen_at FROM projects WHERE id = ?",
+                (project_id,),
+            ).fetchone()
+        if row is None:
+            raise ValueError(f"Unknown annotation project ID: {project_id}")
+        return row["split_frozen_at"] is not None
