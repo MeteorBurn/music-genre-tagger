@@ -21,32 +21,44 @@ body {
 header, main { width: min(1180px, calc(100% - 32px)); margin: 0 auto; }
 header { padding: 40px 0 20px; }
 h1, h2, h3, p { margin-top: 0; }
+.muted { color: var(--muted); }
 .eyebrow { color: var(--accent); letter-spacing: .12em; text-transform: uppercase; font-size: .75rem; }
 main { display: grid; gap: 20px; padding-bottom: 48px; }
 .panel { background: color-mix(in srgb, var(--panel) 94%, transparent); border: 1px solid var(--border); border-radius: 18px; padding: 24px; box-shadow: 0 20px 60px #0006; }
-.inline-form, .action-row, .jump-row, .review-actions, .review-heading { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.review-heading { justify-content: space-between; }
+.inline-form, .action-row, .jump-row, .review-actions, .review-heading, .section-heading { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.review-heading, .section-heading { justify-content: space-between; }
+.section-heading p { margin-bottom: 0; }
 .grid-form { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) auto; gap: 12px; align-items: end; margin-bottom: 24px; }
 .grid-form > * { min-width: 0; }
+.active-label-row { display: grid; grid-template-columns: minmax(240px, 2fr) 1fr 1fr auto; gap: 12px; align-items: end; }
+.trusted-grid { display: grid; grid-template-columns: minmax(280px, 2fr) minmax(200px, 1fr) auto auto; gap: 12px; align-items: end; }
 label { display: grid; gap: 6px; color: var(--muted); font-size: .85rem; }
 input, select, textarea, button { font: inherit; }
 input, select, textarea { width: 100%; max-width: 100%; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; }
 button { color: var(--text); background: var(--panel-raised); border: 1px solid var(--border); border-radius: 9px; padding: 10px 14px; cursor: pointer; }
 button:hover, button.selected { border-color: var(--accent); color: var(--accent); }
+button:disabled { cursor: not-allowed; opacity: .45; border-color: var(--border); color: var(--muted); }
 button.primary { color: #04110f; background: var(--accent); border-color: var(--accent); font-weight: 700; }
 button.primary:hover { background: var(--accent-strong); }
+hr { border: 0; border-top: 1px solid var(--border); margin: 28px 0; }
+details { margin-top: 24px; border-top: 1px solid var(--border); padding-top: 18px; }
+summary { cursor: pointer; color: var(--accent); }
+.advanced-form { grid-template-columns: minmax(280px, 2fr) minmax(200px, 1fr) auto; margin-top: 18px; }
+.progress-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 16px; }
+.progress-card, .batch-row { display: grid; gap: 6px; border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+.progress-card.complete { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.progress-card span, .progress-card small, .batch-row span, .batch-row small { color: var(--muted); overflow-wrap: anywhere; }
+.batch-list { display: grid; gap: 8px; }
 audio { width: 100%; margin: 18px 0 12px; }
 .jump-row { justify-content: center; }
-.label-grid { display: grid; gap: 12px; margin: 24px 0; }
-.label-row { display: grid; grid-template-columns: minmax(190px, 1fr) 2fr; align-items: center; gap: 16px; border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
-.label-row.focused { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-.label-row h3 { margin: 0; }
-.state-controls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.single-label-review { margin: 24px 0; border: 1px solid var(--accent); border-radius: 12px; padding: 18px; }
+.single-label-review p { margin-bottom: 4px; }
+.state-controls { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .notes { margin-bottom: 18px; }
 .review-actions { justify-content: space-between; }
 pre { color: var(--muted); white-space: pre-wrap; }
 #review-status { color: var(--danger); margin-top: 14px; }
 @media (max-width: 800px) {
-  .grid-form, .label-row { grid-template-columns: 1fr; }
-  .state-controls { grid-template-columns: repeat(2, 1fr); }
+  .grid-form, .active-label-row, .trusted-grid, .progress-grid { grid-template-columns: 1fr; }
+  .state-controls { grid-template-columns: 1fr; }
 }

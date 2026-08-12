@@ -151,6 +151,7 @@ class AnnotationApiTests(TestCase):
                     app,
                     "GET",
                     f"/api/projects/{project_id}/queue/next",
+                    params={"label": NEW_LABELS[1]},
                 )
             )
             self.assertEqual(next_response.status_code, 200)
@@ -161,6 +162,15 @@ class AnnotationApiTests(TestCase):
             self.assertEqual(queue_item["active_label"], NEW_LABELS[1])
             self.assertEqual(queue_item["state"], "unreviewed")
             queue_item_id = queue_item["queue_item_id"]
+            other_label_response = asyncio.run(
+                api_request(
+                    app,
+                    "GET",
+                    f"/api/projects/{project_id}/queue/next",
+                    params={"label": NEW_LABELS[0]},
+                )
+            )
+            self.assertEqual(other_label_response.status_code, 204)
 
             annotation_response = asyncio.run(
                 api_request(

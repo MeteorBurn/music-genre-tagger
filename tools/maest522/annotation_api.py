@@ -254,12 +254,15 @@ def _queue_item_payload(
 def _next_incomplete_queue_item(
     store: AnnotationStore,
     project_id: int,
+    label: str,
     after_id: int | None,
 ) -> dict[str, object] | None:
+    if label not in NEW_LABELS:
+        raise ValueError(f"Unknown extension label: {label}")
     with store.connection() as connection:
         row = connection.execute(
             "SELECT queue_items.id FROM queue_items "
-            "WHERE queue_items.project_id = ? "
+            "WHERE queue_items.project_id = ? AND queue_items.label = ? "
             "AND (? IS NULL OR queue_items.id > ?) "
             "AND NOT EXISTS ("
             "  SELECT 1 FROM confirmed_label_events AS events "
@@ -268,7 +271,7 @@ def _next_incomplete_queue_item(
             "  AND events.label = queue_items.label"
             ") "
             "ORDER BY queue_items.id LIMIT 1",
-            (project_id, after_id, after_id),
+            (project_id, label, after_id, after_id),
         ).fetchone()
     return None if row is None else _queue_item_payload(store, project_id, int(row["id"]))
 
@@ -483,10 +486,16 @@ def create_app(
     @app.get("/api/projects/{project_id}/queue/next", response_model=None)
     def next_queue_item(
         project_id: int,
+        label: str,
         after_id: int | None = None,
     ) -> Response | dict[str, object]:
         try:
-            payload = _next_incomplete_queue_item(store, project_id, after_id)
+            payload = _next_incomplete_queue_item(
+                store,
+                project_id,
+                label,
+                after_id,
+            )
             return Response(status_code=204) if payload is None else payload
         except (ValueError, RuntimeError) as error:
             raise _http_error(error) from error
