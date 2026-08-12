@@ -28,8 +28,16 @@ Annotation UI использует отдельный `requirements-annotation.t
 
 ## 3. Сначала зафиксировать датасет
 
-До обучения нужно завершить разметку, fingerprint audit и group-disjoint split
-70/15/15. Экспорт UI создаёт `training.jsonl` и `dataset_summary.json`.
+До обучения нужно последовательно собрать подтверждённые `positive/negative`
+примеры для всех трёх новых классов, выполнить fingerprint audit и один общий
+group-disjoint split 70/15/15. По умолчанию цель каждого класса —
+`1000 positive + 1000 hard negatives`, но её можно независимо изменить до
+freeze. Экспорт UI создаёт `training.jsonl` и `dataset_summary.json`.
+
+Manifest строится из последних событий confirmed-label journal, а не из папок
+кандидатов или очередей. Для каждого трека записываются все три состояния и
+`label_mask`: `positive/negative → 1`, `uncertain/unreviewed → 0`. Поэтому один
+и тот же трек может обучать один extension output и быть masked для двух других.
 
 Portable `audio_ref` разрешается относительно папки manifest. Поэтому рядом с
 manifest нужно создать каталог `audio/` и поместить туда файлы с именами,
@@ -180,7 +188,7 @@ Threshold каждого нового label выбирается на validation
 Без `--allow-test` команда откажет. Повторный test-run для того же run directory
 тоже блокируется.
 
-## 9. Следующий annotation round
+## 9. Кандидаты для следующей версии датасета
 
 Active-learning ranking принимает только training pool и до scoring исключает
 reviewed tracks, val/test, siblings уже размеченных groups и исчерпанные quota.
@@ -195,17 +203,26 @@ reviewed tracks, val/test, siblings уже размеченных groups и ис
 
 Основной output содержит только `track_id → acquisition_score`; predictions
 остаются в отдельной diagnostic части и не показываются в annotation UI.
+Результат импортируется в новый или ещё не замороженный annotation project.
+Уже зафиксированные split/test и manifest текущей версии не дописываются.
 
 ## 10. Практический порядок для вашей библиотеки
 
-1. Импортировать целевые папки и M3U.
-2. Размечать по 100 credits на label в каждом раунде, в любом порядке внутри
-   очереди, до 1000 на label.
-3. После первых blind val/test queues заморозить split и export manifest.
-4. Собрать разнообразный `replay_train` из оставшихся треков и отдельный
-   `regression_holdout`.
-5. Провести Stage 0 parity, затем Stage 1 и Stage 2.
-6. Вернуться к разметке train-only hard negatives через acquisition output.
-7. Stage 3 применять только по условиям выше.
-8. Зафиксировать thresholds, один раз открыть test и только затем готовить
-   Hugging Face release.
+1. В приложении кандидатов подготовить доверенные `+` и `-` M3U для
+   `Minimal-Deep-Tech` и импортировать их через preflight/commit до текущей
+   цели.
+2. Вручную переключиться на `Microhouse`, затем на `RoMinimal`; UI сам жанр не
+   меняет.
+3. При необходимости дополнить каждый класс ручной одно-жанровой очередью.
+4. Только после выполнения всех шести целей запустить fingerprints,
+   зафиксировать один split и экспортировать masked manifest.
+5. Проверить положительное и отрицательное покрытие каждого класса во всех
+   трёх split и сохранить split-audit digest.
+6. Собрать разнообразный `replay_train` из старых 519-классовых данных и
+   отдельный `regression_holdout`.
+7. Провести Stage 0 parity, затем Stage 1 и Stage 2.
+8. Если нужны новые пограничные примеры, создать следующую версию annotation
+   project/dataset; не дописывать уже замороженный test split.
+9. Stage 3 применять только по условиям выше.
+10. Зафиксировать thresholds, один раз открыть test и только затем готовить
+    Hugging Face release.

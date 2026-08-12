@@ -125,15 +125,23 @@ class ManifestExportTests(TestCase):
             self.assertEqual(
                 partial["label_mask"],
                 {
-                    NEW_LABELS[0]: True,
-                    NEW_LABELS[1]: True,
-                    NEW_LABELS[2]: False,
+                    NEW_LABELS[0]: 1,
+                    NEW_LABELS[1]: 1,
+                    NEW_LABELS[2]: 0,
                 },
             )
             self.assertEqual(
                 partial["candidate_roles"],
-                {NEW_LABELS[0]: "positive_candidate"},
+                {
+                    NEW_LABELS[0]: "positive_candidate",
+                    NEW_LABELS[1]: "hard_negative_candidate",
+                },
             )
+            self.assertEqual(
+                partial["label_provenance"][NEW_LABELS[0]],
+                {"event_kind": "correction", "batch_id": None},
+            )
+            self.assertIsNone(partial["label_provenance"][NEW_LABELS[2]])
             summary = json.loads(
                 output_path.with_name("dataset_summary.json").read_text(
                     encoding="utf-8"
@@ -144,3 +152,18 @@ class ManifestExportTests(TestCase):
                 {"train": 3, "val": 2, "test": 2},
             )
             self.assertEqual(len(summary["split_audit_sha256"]), 64)
+
+            with store.connection() as connection:
+                connection.execute(
+                    "DELETE FROM confirmed_label_events WHERE track_id = ("
+                    "SELECT id FROM tracks WHERE split = 'test' "
+                    "AND path LIKE '%coverage-5.wav') AND label = ?",
+                    (NEW_LABELS[2],),
+                )
+            with self.assertRaisesRegex(RuntimeError, "coverage"):
+                export_training_manifest(
+                    store,
+                    project_id,
+                    root / "export" / "invalid.jsonl",
+                    portable=True,
+                )

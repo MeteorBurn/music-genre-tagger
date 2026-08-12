@@ -7,12 +7,15 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from tools.maest522.annotation_db import AnnotationStore
+from tools.maest522.confirmed_labels import get_label_progress, update_label_goal
 from tools.maest522.constants import NEW_LABELS
 from tools.maest522.fingerprints import FingerprintResult, fingerprint_project
-from tools.maest522.library import import_source
 from tools.maest522.manifests import export_training_manifest
-from tools.maest522.queues import create_round
 from tools.maest522.splits import audit_split_leakage, freeze_group_splits
+from tools.maest522.trusted_import import (
+    commit_trusted_playlist,
+    preflight_trusted_playlist,
+)
 
 
 def write_unique_wav(path: Path, sample_value: int) -> None:
@@ -37,16 +40,6 @@ class AnnotationWorkflowTests(TestCase):
                 audio_path = audio_dir / f"track-{track_index:02d}.wav"
                 write_unique_wav(audio_path, sample_value=track_index + 1)
                 audio_paths.append(audio_path)
-            micro_playlist = root / "microhouse.m3u"
-            minimal_playlist = root / "minimal-hard-negatives.m3u8"
-            micro_playlist.write_text(
-                "\n".join(str(path) for path in audio_paths[:8]) + "\n",
-                encoding="utf-8",
-            )
-            minimal_playlist.write_text(
-                "\n".join(str(path) for path in audio_paths[4:]) + "\n",
-                encoding="utf-8",
-            )
             calculate_mock.side_effect = lambda audio_path, _fpcalc_path: FingerprintResult(
                 "available",
                 f"fingerprint-{Path(audio_path).stem}",
@@ -58,26 +51,36 @@ class AnnotationWorkflowTests(TestCase):
             store = AnnotationStore(database_path)
             store.initialize()
             project_id = store.create_project("workflow")
-            import_source(
-                store,
-                project_id,
-                audio_dir,
-                NEW_LABELS[0],
-                "positive_candidate",
-            )
-            import_source(
-                store,
-                project_id,
-                micro_playlist,
-                NEW_LABELS[1],
-                "positive_candidate",
-            )
-            import_source(
-                store,
-                project_id,
-                minimal_playlist,
-                NEW_LABELS[2],
-                "hard_negative_candidate",
+            for label_index, label in enumerate(NEW_LABELS):
+                for annotation_state, selected_paths in (
+                    ("positive", audio_paths[::2]),
+                    ("negative", audio_paths[1::2]),
+                ):
+                    playlist = root / f"label-{label_index}-{annotation_state}.m3u"
+                    playlist.write_text(
+                        "\n".join(str(path) for path in selected_paths) + "\n",
+                        encoding="utf-8",
+                    )
+                    preflight = preflight_trusted_playlist(
+                        store,
+                        project_id,
+                        playlist,
+                        label,
+                        annotation_state,
+                    )
+                    self.assertTrue(preflight.clean)
+                    commit_trusted_playlist(
+                        store,
+                        project_id,
+                        playlist,
+                        label,
+                        annotation_state,
+                        preflight.playlist_sha256,
+                    )
+                update_label_goal(store, project_id, label, 6, 6)
+
+            self.assertTrue(
+                all(progress.complete for progress in get_label_progress(store, project_id))
             )
 
             fingerprint_summary = fingerprint_project(
@@ -89,32 +92,6 @@ class AnnotationWorkflowTests(TestCase):
             split_summary = freeze_group_splits(store, project_id, seed=522)
             self.assertEqual(sum(split_summary.split_counts.values()), 12)
             self.assertTrue(audit_split_leakage(store, project_id).clean)
-
-            val_round = create_round(
-                store, project_id, NEW_LABELS[0], 1, split="val"
-            )
-            test_round = create_round(
-                store, project_id, NEW_LABELS[0], 1, split="test"
-            )
-            train_round = create_round(
-                store, project_id, NEW_LABELS[0], 1, split="train"
-            )
-            queue_item_ids = (
-                val_round.queue_item_ids
-                + test_round.queue_item_ids
-                + train_round.queue_item_ids
-            )
-            self.assertEqual(len(queue_item_ids), 12)
-            for queue_item_id in queue_item_ids:
-                store.append_review(
-                    queue_item_id,
-                    {
-                        NEW_LABELS[0]: "positive",
-                        NEW_LABELS[1]: "negative",
-                        NEW_LABELS[2]: "uncertain",
-                    },
-                    "fixture review",
-                )
 
             reopened_store = AnnotationStore(database_path)
             reopened_store.initialize()
@@ -133,6 +110,9 @@ class AnnotationWorkflowTests(TestCase):
             self.assertEqual(report.rows_written, 12)
             self.assertEqual(len(exported_rows), 12)
             self.assertTrue(all("path" not in row for row in exported_rows))
+            self.assertTrue(
+                all(all(row["label_mask"].values()) for row in exported_rows)
+            )
             self.assertEqual({row["split"] for row in exported_rows}, {"train", "val", "test"})
             with reopened_store.connection() as connection:
                 foreign_key_issues = connection.execute(

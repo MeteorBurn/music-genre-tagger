@@ -155,7 +155,7 @@ def decode_manifest_row(
                     f"track {track_id!r} has no manifest state for {label}"
                 )
             mask_value = raw_label_mask.get(label)
-            if mask_value not in {0, 1, False, True}:
+            if isinstance(mask_value, bool) or mask_value not in {0, 1}:
                 raise ValueError(
                     f"track {track_id!r} has invalid label_mask for {label}"
                 )

@@ -91,6 +91,17 @@ def export_training_manifest(
             "FROM tracks WHERE project_id = ? ORDER BY exact_sha256",
             (project_id,),
         ).fetchall()
+        event_rows = connection.execute(
+            "SELECT events.track_id, events.label, events.state, "
+            "events.event_kind, events.batch_id FROM confirmed_label_events "
+            "AS events JOIN ("
+            "    SELECT track_id, label, MAX(id) AS latest_id "
+            "    FROM confirmed_label_events WHERE project_id = ? "
+            "    GROUP BY track_id, label"
+            ") AS latest ON latest.latest_id = events.id "
+            "WHERE events.project_id = ?",
+            (project_id, project_id),
+        ).fetchall()
         source_rows = connection.execute(
             "SELECT track_sources.track_id, track_sources.suggested_label, "
             "sources.candidate_role FROM track_sources "
@@ -101,6 +112,7 @@ def export_training_manifest(
 
     source_labels: dict[int, set[str]] = {}
     candidate_roles: dict[int, dict[str, str]] = {}
+    provenance: dict[tuple[int, str], dict[str, object]] = {}
     for row in source_rows:
         track_id = int(row["track_id"])
         label = str(row["suggested_label"])
@@ -109,6 +121,21 @@ def export_training_manifest(
             candidate_roles.setdefault(track_id, {})[label] = str(
                 row["candidate_role"]
             )
+    for row in event_rows:
+        track_id = int(row["track_id"])
+        label = str(row["label"])
+        annotation_state = str(row["state"])
+        provenance[(track_id, label)] = {
+            "event_kind": str(row["event_kind"]),
+            "batch_id": (
+                None if row["batch_id"] is None else int(row["batch_id"])
+            ),
+        }
+        candidate_roles.setdefault(track_id, {})[label] = {
+            "positive": "positive_candidate",
+            "negative": "hard_negative_candidate",
+            "uncertain": "unlabeled_pool",
+        }[annotation_state]
 
     output_rows = []
     state_counts = {
@@ -139,7 +166,11 @@ def export_training_manifest(
             for label in NEW_LABELS
         }
         label_mask = {
-            label: labels[label] in TRAINING_STATES
+            label: 1 if labels[label] in TRAINING_STATES else 0
+            for label in NEW_LABELS
+        }
+        label_provenance = {
+            label: provenance.get((track_id, label))
             for label in NEW_LABELS
         }
         exported = {
@@ -157,6 +188,7 @@ def export_training_manifest(
             ),
             "labels": labels,
             "label_mask": label_mask,
+            "label_provenance": label_provenance,
         }
         if not portable:
             exported["path"] = str(audio_path)

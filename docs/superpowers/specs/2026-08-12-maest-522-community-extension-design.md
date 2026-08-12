@@ -2,7 +2,9 @@
 
 Date: 2026-08-12
 
-Status: approved design, pending implementation plan
+Status: superseded for annotation workflow by
+`2026-08-12-sequential-single-label-annotation-design.md`; the model/training
+architecture remains applicable.
 
 ## 1. Objective
 
@@ -12,9 +14,9 @@ classes and appends three independent multilabel outputs:
 
 | Index | Label |
 | ---: | --- |
-| 519 | `Electronic---Microhouse` |
-| 520 | `Electronic---RoMinimal` |
-| 521 | `Electronic---DeepTech-Minimal` |
+| 519 | `Electronic---Minimal-Deep-Tech` |
+| 520 | `Electronic---Microhouse` |
+| 521 | `Electronic---RoMinimal` |
 
 The result must remain a single fine-tuned MAEST model. It must not be a
 separate classifier trained on frozen MAEST embeddings.

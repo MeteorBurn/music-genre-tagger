@@ -349,6 +349,10 @@ def audit_split_leakage(
                 "release_id": _normalize_group_value(row["release_id"]),
                 "group_id": str(group_id),
                 "split": str(split),
+                "labels": {
+                    label: current.get((int(row["id"]), label), "unreviewed")
+                    for label in NEW_LABELS
+                },
             }
         )
 
