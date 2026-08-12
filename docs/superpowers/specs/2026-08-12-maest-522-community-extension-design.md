@@ -29,8 +29,10 @@ and staged unfreezing of the final transformer blocks.
 - Approximately 75% of the library is in or near the target style domain.
 - The initial candidate pool comes from target-style folders and user-provided
   M3U/M3U8 playlists.
-- The annotation target is up to 1,000 confirmed positive tracks per new
-  label. A track may be positive for more than one new label.
+- Annotation is organized as up to 10 rounds of 100 candidates per target
+  label, for a maximum review budget of 1,000 queued candidates per label. A
+  track may be positive for more than one new label, and overlapping candidates
+  are reviewed only once.
 - The remaining library is available as an unlabeled replay pool and as a
   source of hard negatives.
 - Training hardware is an NVIDIA GeForce RTX 3090 with 24 GB VRAM.
@@ -155,8 +157,9 @@ without the previous answer, to measure single-annotator self-consistency.
 
 Annotation proceeds in rounds:
 
-1. Collect approximately 150 to 200 clear seed positives per label plus
-   explicitly reviewed neighboring negatives.
+1. Build the first balanced seed round with up to 100 candidates from each
+   label-specific source queue plus explicitly selected neighboring negatives.
+   Deduplicate overlaps before review.
 2. Freeze group-level train, validation, and test assignments for the full
    eligible candidate universe using the procedure in section 8.
 3. Train a head-only seed model using only the train portion of the seed.
@@ -167,12 +170,16 @@ Annotation proceeds in rounds:
 6. In parallel, fill the fixed validation and test annotation queues using
    sampling rules frozen before the seed model is trained; student predictions
    never rank these queues.
-7. Repeat until validation quality saturates or the annotation target is
-   reached.
+7. Close the round after up to 100 newly queued candidates per target label,
+   snapshot its manifests, train, and evaluate.
+8. Repeat for at most 10 rounds, stopping earlier when validation quality
+   saturates and the hard-negative and data-coverage requirements are met.
 
 Every selected track is reviewed for all three labels. A positive for one
 label may therefore be a positive, negative, or uncertain example for either
-of the other labels.
+of the other labels. Round quotas count source-queue candidates, not guaranteed
+positives. Reports therefore show both queued-candidate counts and confirmed
+positive counts for each label.
 
 Hard-negative strata include at least `Minimal`, `Minimal Techno`, `Tech
 House`, `Deep House`, `Deep Techno`, `Dub Techno`, `House`, and `Techno` where
@@ -255,7 +262,8 @@ The application displays:
 - jumps to 20%, 50%, and 80% of the track;
 - independent positive, negative, and uncertain controls for all three
   labels;
-- progress and annotation counts;
+- progress for the current 100-candidate tranche, round number from 1 to 10,
+  and separate queued/reviewed/positive counts;
 - previous, next, save, and explicit skip actions.
 
 The model prediction, uncertainty value, queue reason, and split name are
