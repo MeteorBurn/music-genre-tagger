@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 
 import torch
 from torch import Tensor
 from transformers import ASTConfig, ASTForAudioClassification
+
+from .hf_feature_extractor import write_feature_extractor_release
+from .model_labels import build_522_labels, load_official_519_labels
+from .native_model import load_native_state
 
 
 def build_ast_config(
@@ -176,3 +181,19 @@ def load_hf_model_strict(
             f"unexpected={incompatibility.unexpected_keys}"
         )
     return model.eval()
+
+
+def export_hf_release(
+    native_checkpoint: Path,
+    output_dir: Path,
+) -> ASTForAudioClassification:
+    """Strictly convert and save standard AST plus exact remote-code frontend."""
+    native_state = load_native_state(native_checkpoint)
+    labels = build_522_labels(load_official_519_labels())
+    config = build_ast_config(labels)
+    model = load_hf_model_strict(native_state, config)
+    resolved_output = Path(output_dir)
+    resolved_output.mkdir(parents=True, exist_ok=True)
+    model.save_pretrained(resolved_output, safe_serialization=True)
+    write_feature_extractor_release(resolved_output)
+    return model
