@@ -394,6 +394,114 @@ def load_training_checkpoint(
     )
 
 
+def _append_jsonl(path: Path, payload: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    encoded = (
+        json.dumps(payload, sort_keys=True, ensure_ascii=False) + "\n"
+    ).encode("utf-8")
+    with path.open("ab") as output:
+        output.write(encoded)
+        output.flush()
+        os.fsync(output.fileno())
+
+
+def run_training_stage(
+    model: nn.Module,
+    batches_for_epoch: Callable[[int], Iterable[tuple[Tensor, Tensor]]],
+    optimizer: torch.optim.Optimizer,
+    loss_function: Callable[[Any, Tensor], Tensor],
+    validate: Callable[[nn.Module], Mapping[str, Any]],
+    config: TrainingConfig,
+    stage: TrainingStage,
+    input_digests: Mapping[str, str],
+    device: torch.device,
+    resume_from: Path | None = None,
+) -> TrainingProgress:
+    """Run one stage with validation, early stopping, and atomic resume points."""
+    resolved_stage = TrainingStage(stage)
+    config.output_dir.mkdir(parents=True, exist_ok=True)
+    best_metrics: dict[str, Any] = {}
+    starting_epoch = 0
+    global_step = 0
+    if resume_from is not None:
+        resumed = load_training_checkpoint(
+            resume_from,
+            model,
+            optimizer,
+            input_digests,
+        )
+        if resumed.stage is not resolved_stage:
+            raise ValueError(
+                f"resume checkpoint belongs to {resumed.stage.value}, "
+                f"not {resolved_stage.value}"
+            )
+        starting_epoch = resumed.epoch
+        global_step = resumed.global_step
+        best_metrics = dict(resumed.best_metrics)
+
+    stopper = EarlyStopping(config.patience)
+    progress = TrainingProgress(
+        stage=resolved_stage,
+        epoch=starting_epoch,
+        global_step=global_step,
+        best_metrics=best_metrics,
+    )
+    for epoch in range(starting_epoch + 1, config.max_epochs_per_stage + 1):
+        training_result = train_accumulated_batches(
+            model=model,
+            batches=batches_for_epoch(epoch),
+            optimizer=optimizer,
+            loss_function=loss_function,
+            accumulation_steps=config.accumulation_steps,
+            device=device,
+            max_gradient_norm=config.max_gradient_norm,
+        )
+        validation = dict(validate(model))
+        improved = select_better_validation_result(
+            validation,
+            best_metrics or None,
+        )
+        if improved:
+            best_metrics = validation
+        global_step += training_result.optimizer_steps
+        progress = TrainingProgress(
+            stage=resolved_stage,
+            epoch=epoch,
+            global_step=global_step,
+            best_metrics=dict(best_metrics),
+        )
+        save_training_checkpoint(
+            config.output_dir / "last.ckpt",
+            model,
+            optimizer,
+            progress,
+            input_digests,
+        )
+        if improved:
+            save_training_checkpoint(
+                config.output_dir / "best.ckpt",
+                model,
+                optimizer,
+                progress,
+                input_digests,
+            )
+        _append_jsonl(
+            config.output_dir / "metrics.jsonl",
+            {
+                "stage": resolved_stage.value,
+                "epoch": epoch,
+                "global_step": global_step,
+                "train_mean_loss": training_result.mean_loss,
+                "optimizer_steps": training_result.optimizer_steps,
+                "improved": improved,
+                "validation": validation,
+            },
+        )
+        if stopper.update(improved):
+            break
+    return progress
+
+
 def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
     resolved = Path(path)
     resolved.parent.mkdir(parents=True, exist_ok=True)

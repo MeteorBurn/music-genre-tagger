@@ -16,6 +16,7 @@ from tools.maest522.train import (
     save_training_checkpoint,
     select_better_validation_result,
     train_accumulated_batches,
+    run_training_stage,
 )
 
 
@@ -194,3 +195,66 @@ class TrainerTests(TestCase):
             self.assertIn("teacher_checkpoint", encoded)
             self.assertEqual(payload["seed"], 522)
             self.assertEqual(set(config.input_digests()), {"teacher", "annotation", "replay"})
+
+    def test_stage_runner_writes_last_best_and_metrics_with_early_stop(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config = self._config(root)
+            model = TinyStagedModel()
+            for parameter in model.parameters():
+                parameter.requires_grad_(False)
+            for module in (model.extension_head, model.extension_dist_head):
+                for parameter in module.parameters():
+                    parameter.requires_grad_(True)
+            optimizer = build_optimizer(model, config, TrainingStage.EXTENSION_HEADS)
+            validation_results = iter(
+                [
+                    {
+                        "regression_gates_passed": True,
+                        "macro_average_precision": 0.7,
+                        "macro_f1": 0.6,
+                        "legacy_probability_drift": 0.01,
+                    },
+                    {
+                        "regression_gates_passed": True,
+                        "macro_average_precision": 0.69,
+                        "macro_f1": 0.7,
+                        "legacy_probability_drift": 0.005,
+                    },
+                    {
+                        "regression_gates_passed": True,
+                        "macro_average_precision": 0.68,
+                        "macro_f1": 0.8,
+                        "legacy_probability_drift": 0.001,
+                    },
+                ]
+            )
+            batches = [
+                (torch.tensor([[1.0, 0.0]]), torch.tensor([[1.0]])),
+                (torch.tensor([[0.0, 1.0]]), torch.tensor([[0.0]])),
+            ]
+
+            progress = run_training_stage(
+                model=model,
+                batches_for_epoch=lambda epoch: list(batches),
+                optimizer=optimizer,
+                loss_function=lambda output, target: nn.functional.mse_loss(
+                    output,
+                    target,
+                ),
+                validate=lambda current: next(validation_results),
+                config=config,
+                stage=TrainingStage.EXTENSION_HEADS,
+                input_digests=config.input_digests(),
+                device=torch.device("cpu"),
+            )
+
+            self.assertEqual(progress.epoch, 3)
+            self.assertEqual(progress.global_step, 3)
+            self.assertEqual(progress.best_metrics["macro_average_precision"], 0.7)
+            self.assertTrue((config.output_dir / "last.ckpt").is_file())
+            self.assertTrue((config.output_dir / "best.ckpt").is_file())
+            metric_rows = (config.output_dir / "metrics.jsonl").read_text(
+                encoding="utf-8"
+            ).splitlines()
+            self.assertEqual(len(metric_rows), 3)
