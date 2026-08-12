@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Разметка MAEST 522</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header>
+    <p class="eyebrow">[MAEST 522] Community extension</p>
+    <h1>Разметка MAEST 522</h1>
+    <p>Для каждого трека укажите состояние всех трёх стилей. Предсказания модели скрыты.</p>
+  </header>
+
+  <main>
+    <section class="panel setup-panel">
+      <h2>Проект разметки</h2>
+      <div class="inline-form">
+        <input id="project-name" value="maest-522-community" aria-label="Название проекта">
+        <button id="create-project">Создать / открыть</button>
+        <strong id="project-id">Проект не выбран</strong>
+      </div>
+
+      <h3>Импорт папки или локального плейлиста</h3>
+      <div class="grid-form">
+        <label>Локальный путь<input id="source-path" placeholder="D:\\Music\\Microhouse"></label>
+        <label>Целевой стиль<select id="source-label"></select></label>
+        <label>Роль кандидатов
+          <select id="candidate-role">
+            <option value="positive_candidate">Положительные кандидаты</option>
+            <option value="hard_negative_candidate">Hard negatives</option>
+            <option value="unlabeled_pool">Неразмеченный пул</option>
+          </select>
+        </label>
+        <button id="import-source">Импортировать</button>
+      </div>
+
+      <h3>Загрузить стартовый M3U/M3U8</h3>
+      <div class="grid-form">
+        <label>Плейлист<input id="playlist-file" type="file" accept=".m3u,.m3u8"></label>
+        <label>Базовая папка плейлиста<input id="base-directory" placeholder="D:\\Music"></label>
+        <button id="upload-playlist">Импортировать плейлист</button>
+      </div>
+
+      <h3>Подготовить очереди</h3>
+      <div class="action-row">
+        <button id="run-fingerprints">1. Fingerprints</button>
+        <button id="freeze-splits">2. Зафиксировать split 70/15/15</button>
+        <label>Раунд<input id="round-number" type="number" min="1" value="1"></label>
+        <label>Split<select id="round-split"><option>train</option><option>val</option><option>test</option></select></label>
+        <button id="create-round">3. Создать по 100 на стиль</button>
+      </div>
+      <pre id="setup-status" aria-live="polite"></pre>
+    </section>
+
+    <section class="panel review-panel">
+      <div class="review-heading">
+        <div>
+          <p class="eyebrow" id="queue-position">Очередь</p>
+          <h2 id="track-name">Нет выбранного трека</h2>
+          <p id="track-context"></p>
+        </div>
+        <button id="load-next">Загрузить следующий</button>
+      </div>
+
+      <audio id="audio" controls preload="metadata"></audio>
+      <div class="jump-row">
+        <button data-jump="0.2">J · 20%</button>
+        <button data-jump="0.5">K · 50%</button>
+        <button data-jump="0.8">L · 80%</button>
+      </div>
+
+      <div id="label-grid" class="label-grid"></div>
+      <label class="notes">Заметки<textarea id="notes" rows="3"></textarea></label>
+      <div class="review-actions">
+        <button id="previous-item">Backspace · Назад</button>
+        <button id="save-item" class="primary">Enter · Сохранить и дальше</button>
+      </div>
+      <p id="review-status" aria-live="polite"></p>
+    </section>
+  </main>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

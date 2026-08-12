@@ -265,3 +265,42 @@ class AnnotationStore:
             }
             for row in rows
         }
+
+    def append_review(
+        self,
+        queue_item_id: int,
+        states: dict[str, str],
+        note: str = "",
+    ) -> tuple[int, ...]:
+        """Append a complete three-label review in one SQLite transaction."""
+        if set(states) != set(NEW_LABELS):
+            raise ValueError("Review must contain exactly all three extension labels.")
+        invalid_states = {state for state in states.values() if state not in REVIEW_STATES}
+        if invalid_states:
+            raise ValueError(
+                "Unknown annotation states: " + ", ".join(sorted(invalid_states))
+            )
+        created_at = datetime.now(timezone.utc).isoformat()
+        event_ids: list[int] = []
+        with self.connection() as connection:
+            queue_item = connection.execute(
+                "SELECT id FROM queue_items WHERE id = ?",
+                (queue_item_id,),
+            ).fetchone()
+            if queue_item is None:
+                raise ValueError(f"Unknown annotation queue item ID: {queue_item_id}")
+            for label in NEW_LABELS:
+                cursor = connection.execute(
+                    "INSERT INTO annotation_events("
+                    "queue_item_id, label, state, note, created_at"
+                    ") VALUES (?, ?, ?, ?, ?)",
+                    (
+                        queue_item_id,
+                        label,
+                        states[label],
+                        note.strip(),
+                        created_at,
+                    ),
+                )
+                event_ids.append(int(cursor.lastrowid))
+        return tuple(event_ids)

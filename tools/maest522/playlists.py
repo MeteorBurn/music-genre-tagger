@@ -26,8 +26,20 @@ def parse_playlist(playlist_path: Path) -> list[Path]:
     if resolved_playlist.suffix.lower() not in {".m3u", ".m3u8"}:
         raise ValueError(f"Unsupported playlist extension: {resolved_playlist.suffix}")
 
+    return parse_playlist_text(
+        resolved_playlist.read_text(encoding="utf-8-sig"),
+        resolved_playlist.parent,
+    )
+
+
+def parse_playlist_text(playlist_text: str, base_directory: Path) -> list[Path]:
+    """Parse uploaded playlist text relative to an explicit local base directory."""
+    resolved_base = Path(base_directory).resolve()
+    if not resolved_base.is_dir():
+        raise ValueError(f"Playlist base directory does not exist: {resolved_base}")
+
     entries: list[Path] = []
-    for raw_line in resolved_playlist.read_text(encoding="utf-8-sig").splitlines():
+    for raw_line in playlist_text.lstrip("\ufeff").splitlines():
         value = raw_line.strip()
         if not value or value.startswith("#"):
             continue
@@ -40,6 +52,6 @@ def parse_playlist(playlist_path: Path) -> list[Path]:
 
         candidate = Path(value)
         if not candidate.is_absolute():
-            candidate = resolved_playlist.parent / candidate
+            candidate = resolved_base / candidate
         entries.append(candidate.resolve())
     return entries
