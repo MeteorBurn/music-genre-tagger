@@ -40,8 +40,19 @@ class CardGenerationTests(TestCase):
             dataset_card = report.dataset_card.read_text(encoding="utf-8")
             self.assertIn("license: other", model_card)
             self.assertIn("mtg-upf/discogs-maest-30s-pw-129e-519l", model_card)
-            self.assertIn("Electronic---Microhouse", model_card)
-            self.assertIn("519", model_card)
+            label_lines = [
+                line
+                for line in model_card.splitlines()
+                if "Electronic---" in line
+            ]
+            self.assertEqual(
+                label_lines,
+                [
+                    "- `519` — `Electronic---Minimal-Deep-Tech`",
+                    "- `520` — `Electronic---Microhouse`",
+                    "- `521` — `Electronic---RoMinimal`",
+                ],
+            )
             self.assertIn("hard negatives", dataset_card.lower())
             self.assertIn("uncertain", dataset_card)
             self.assertIn("No source audio", dataset_card)

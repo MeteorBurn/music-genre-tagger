@@ -18,7 +18,15 @@ class ModelLabelsTests(TestCase):
         self.assertEqual(official, tuple(discogs_519labels))
         self.assertEqual(len(official), 519)
         self.assertEqual(labels[:519], official)
-        self.assertEqual(labels[519:], NEW_LABELS)
+        self.assertEqual(
+            labels[519:],
+            (
+                "Electronic---Minimal-Deep-Tech",
+                "Electronic---Microhouse",
+                "Electronic---RoMinimal",
+            ),
+        )
+        self.assertEqual(NEW_LABELS, labels[519:])
         self.assertEqual(len(labels), 522)
         self.assertEqual(len(set(labels)), 522)
 

@@ -87,6 +87,14 @@ class CheckpointExpansionTests(TestCase):
             self.assertTrue(report_path.is_file())
             labels = labels_path.read_text(encoding="utf-8").splitlines()
             self.assertEqual(len(labels), 522)
+            self.assertEqual(
+                labels[-3:],
+                [
+                    "Electronic---Minimal-Deep-Tech",
+                    "Electronic---Microhouse",
+                    "Electronic---RoMinimal",
+                ],
+            )
             self.assertEqual(labels[-3:], list(report["new_labels"]))
             persisted = json.loads(report_path.read_text(encoding="utf-8"))
             self.assertEqual(persisted, report)

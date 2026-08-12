@@ -8,6 +8,7 @@ from tools.maest522.hf_mapping import (
     convert_native_to_hf_state,
     load_hf_model_strict,
 )
+from tools.maest522.model_labels import build_522_labels, load_official_519_labels
 
 
 def tiny_native_state() -> dict[str, torch.Tensor]:
@@ -108,6 +109,23 @@ class HuggingFaceMappingTests(TestCase):
         self.assertIsInstance(model, ASTForAudioClassification)
         self.assertEqual(model.config.num_labels, 522)
         self.assertEqual(model.config.problem_type, "multi_label_classification")
+
+    def test_public_config_uses_the_final_extension_label_order(self) -> None:
+        labels = build_522_labels(load_official_519_labels())
+
+        config = build_ast_config(labels)
+
+        self.assertEqual(
+            tuple(config.id2label[index] for index in (519, 520, 521)),
+            (
+                "Electronic---Minimal-Deep-Tech",
+                "Electronic---Microhouse",
+                "Electronic---RoMinimal",
+            ),
+        )
+        self.assertEqual(config.label2id["Electronic---Minimal-Deep-Tech"], 519)
+        self.assertEqual(config.label2id["Electronic---Microhouse"], 520)
+        self.assertEqual(config.label2id["Electronic---RoMinimal"], 521)
 
     def test_rejects_missing_unexpected_and_shape_mismatched_native_keys(self) -> None:
         native = tiny_native_state()

@@ -1,10 +1,13 @@
 """Shared constants for the MAEST 522 annotation and training workflows."""
 
 NEW_LABELS = (
+    "Electronic---Minimal-Deep-Tech",
     "Electronic---Microhouse",
     "Electronic---RoMinimal",
-    "Electronic---DeepTech-Minimal",
 )
+
+DEFAULT_POSITIVE_TARGET = 1_000
+DEFAULT_NEGATIVE_TARGET = 1_000
 
 REVIEW_STATES = {"positive", "negative", "uncertain", "unreviewed"}
 CANDIDATE_ROLES = {

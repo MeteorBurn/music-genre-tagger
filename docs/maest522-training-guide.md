@@ -9,9 +9,9 @@
 
 ```text
 0..518   исходные Discogs labels из maest-infer==0.2.0
-519      Electronic---Microhouse
-520      Electronic---RoMinimal
-521      Electronic---DeepTech-Minimal
+519      Electronic---Minimal-Deep-Tech
+520      Electronic---Microhouse
+521      Electronic---RoMinimal
 ```
 
 Во время обучения legacy 519 rows и три extension rows представлены разными
