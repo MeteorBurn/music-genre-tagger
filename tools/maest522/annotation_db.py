@@ -6,10 +6,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
-from .constants import NEW_LABELS, REVIEW_STATES, SCHEMA_VERSION
+from .constants import (
+    DEFAULT_NEGATIVE_TARGET,
+    DEFAULT_POSITIVE_TARGET,
+    NEW_LABELS,
+    REVIEW_STATES,
+    SCHEMA_VERSION,
+)
 
 
-SCHEMA_SQL = """
+LABEL_SQL = ", ".join(f"'{label}'" for label in NEW_LABELS)
+
+
+SCHEMA_SQL = f"""
 CREATE TABLE IF NOT EXISTS schema_meta (
     version INTEGER NOT NULL
 );
@@ -62,21 +71,23 @@ CREATE TABLE IF NOT EXISTS queue_items (
     id INTEGER PRIMARY KEY,
     project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+    label TEXT NOT NULL CHECK(label IN ({LABEL_SQL})),
     round_number INTEGER NOT NULL CHECK(round_number > 0),
     acquisition_kind TEXT NOT NULL,
     acquisition_score REAL,
     created_at TEXT NOT NULL,
-    UNIQUE(project_id, track_id)
+    UNIQUE(project_id, track_id, label)
 );
 
 CREATE TABLE IF NOT EXISTS queue_rounds (
     id INTEGER PRIMARY KEY,
     project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    label TEXT NOT NULL CHECK(label IN ({LABEL_SQL})),
     round_number INTEGER NOT NULL CHECK(round_number > 0),
     split TEXT NOT NULL CHECK(split IN ('train', 'val', 'test')),
     acquisition_kind TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    UNIQUE(project_id, round_number, split)
+    UNIQUE(project_id, label, round_number, split)
 );
 
 CREATE TABLE IF NOT EXISTS queue_credits (
@@ -103,6 +114,43 @@ CREATE TABLE IF NOT EXISTS annotation_events (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS label_goals (
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    label TEXT NOT NULL CHECK(label IN ({LABEL_SQL})),
+    positive_target INTEGER NOT NULL CHECK(positive_target > 0),
+    negative_target INTEGER NOT NULL CHECK(negative_target > 0),
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(project_id, label)
+);
+
+CREATE TABLE IF NOT EXISTS confirmed_label_batches (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    label TEXT NOT NULL CHECK(label IN ({LABEL_SQL})),
+    state TEXT NOT NULL CHECK(state IN ('positive', 'negative')),
+    source_kind TEXT NOT NULL CHECK(source_kind IN ('m3u', 'm3u8')),
+    source_path TEXT NOT NULL,
+    playlist_sha256 TEXT NOT NULL,
+    discovered_count INTEGER NOT NULL CHECK(discovered_count >= 0),
+    new_count INTEGER NOT NULL CHECK(new_count >= 0),
+    existing_count INTEGER NOT NULL CHECK(existing_count >= 0),
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS confirmed_label_events (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+    label TEXT NOT NULL CHECK(label IN ({LABEL_SQL})),
+    state TEXT NOT NULL CHECK(state IN ('positive', 'negative', 'uncertain')),
+    event_kind TEXT NOT NULL CHECK(
+        event_kind IN ('trusted_import', 'manual_review', 'correction')
+    ),
+    batch_id INTEGER REFERENCES confirmed_label_batches(id) ON DELETE RESTRICT,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS fingerprint_audit (
     id INTEGER PRIMARY KEY,
     track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
@@ -123,6 +171,12 @@ CREATE INDEX IF NOT EXISTS idx_queue_credits_label
     ON queue_credits(label, candidate_role);
 CREATE INDEX IF NOT EXISTS idx_annotation_queue_label
     ON annotation_events(queue_item_id, label, id);
+CREATE INDEX IF NOT EXISTS idx_confirmed_event_current
+    ON confirmed_label_events(project_id, track_id, label, id);
+CREATE INDEX IF NOT EXISTS idx_confirmed_event_progress
+    ON confirmed_label_events(project_id, label, state, id);
+CREATE INDEX IF NOT EXISTS idx_confirmed_event_batch
+    ON confirmed_label_events(batch_id);
 """
 
 
@@ -152,7 +206,7 @@ class AnnotationStore:
             connection.close()
 
     def initialize(self) -> None:
-        """Create schema version 1, or validate an existing annotation database."""
+        """Create schema version 2, or validate an existing annotation database."""
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         with self.connection() as connection:
             existing = connection.execute(
@@ -201,6 +255,20 @@ class AnnotationStore:
                 "SELECT id FROM projects WHERE name = ?",
                 (normalized_name,),
             ).fetchone()
+            if row is not None:
+                for label in NEW_LABELS:
+                    connection.execute(
+                        "INSERT OR IGNORE INTO label_goals("
+                        "project_id, label, positive_target, negative_target, updated_at"
+                        ") VALUES (?, ?, ?, ?, ?)",
+                        (
+                            int(row["id"]),
+                            label,
+                            DEFAULT_POSITIVE_TARGET,
+                            DEFAULT_NEGATIVE_TARGET,
+                            created_at,
+                        ),
+                    )
         if row is None:
             raise RuntimeError(f"Could not create annotation project: {normalized_name}")
         return int(row["id"])

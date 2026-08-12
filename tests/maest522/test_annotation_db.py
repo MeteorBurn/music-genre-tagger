@@ -6,7 +6,12 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase
 
 from tools.maest522.annotation_db import AnnotationStore
-from tools.maest522.constants import NEW_LABELS, REVIEW_STATES
+from tools.maest522.constants import (
+    DEFAULT_NEGATIVE_TARGET,
+    DEFAULT_POSITIVE_TARGET,
+    NEW_LABELS,
+    REVIEW_STATES,
+)
 
 
 class AnnotationStoreSchemaTests(TestCase):
@@ -21,16 +26,18 @@ class AnnotationStoreSchemaTests(TestCase):
             self.assertEqual(
                 NEW_LABELS,
                 (
+                    "Electronic---Minimal-Deep-Tech",
                     "Electronic---Microhouse",
                     "Electronic---RoMinimal",
-                    "Electronic---DeepTech-Minimal",
                 ),
             )
             self.assertEqual(
                 REVIEW_STATES,
                 {"positive", "negative", "uncertain", "unreviewed"},
             )
-            self.assertEqual(store.schema_version(), 1)
+            self.assertEqual(store.schema_version(), 2)
+
+            project_id = store.create_project("schema-v2")
 
             with closing(sqlite3.connect(database_path)) as connection:
                 tables = {
@@ -40,6 +47,19 @@ class AnnotationStoreSchemaTests(TestCase):
                     )
                 }
                 journal_mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+                goal_rows = connection.execute(
+                    "SELECT label, positive_target, negative_target "
+                    "FROM label_goals WHERE project_id = ? ORDER BY label",
+                    (project_id,),
+                ).fetchall()
+                queue_item_columns = {
+                    row[1]
+                    for row in connection.execute("PRAGMA table_info(queue_items)")
+                }
+                queue_round_columns = {
+                    row[1]
+                    for row in connection.execute("PRAGMA table_info(queue_rounds)")
+                }
 
             self.assertTrue(
                 {
@@ -51,11 +71,27 @@ class AnnotationStoreSchemaTests(TestCase):
                     "queue_items",
                     "queue_credits",
                     "annotation_events",
+                    "label_goals",
+                    "confirmed_label_batches",
+                    "confirmed_label_events",
                     "fingerprint_audit",
                     "schema_meta",
                 }.issubset(tables)
             )
             self.assertEqual(journal_mode.lower(), "wal")
+            self.assertEqual(
+                goal_rows,
+                sorted(
+                    (
+                        label,
+                        DEFAULT_POSITIVE_TARGET,
+                        DEFAULT_NEGATIVE_TARGET,
+                    )
+                    for label in NEW_LABELS
+                ),
+            )
+            self.assertIn("label", queue_item_columns)
+            self.assertIn("label", queue_round_columns)
 
     def test_appends_all_three_review_states_in_one_operation(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -72,9 +108,9 @@ class AnnotationStoreSchemaTests(TestCase):
                 )
                 queue_cursor = connection.execute(
                     "INSERT INTO queue_items("
-                    "project_id, track_id, round_number, acquisition_kind, created_at"
-                    ") VALUES (?, ?, 1, 'fixture', ?)",
-                    (project_id, track_cursor.lastrowid, now),
+                    "project_id, track_id, label, round_number, acquisition_kind, "
+                    "created_at) VALUES (?, ?, ?, 1, 'fixture', ?)",
+                    (project_id, track_cursor.lastrowid, NEW_LABELS[0], now),
                 )
 
             event_ids = store.append_review(
