@@ -26,9 +26,9 @@ playlist.
 
 The three appended labels, in fixed classifier-row order, are:
 
-1. `Electronic---Microhouse` at index 519
-2. `Electronic---RoMinimal` at index 520
-3. `Electronic---Minimal-Deep-Tech` at index 521
+1. `Electronic---Minimal-Deep-Tech` at index 519
+2. `Electronic---Microhouse` at index 520
+3. `Electronic---RoMinimal` at index 521
 
 This exact spelling is global across the native checkpoint, Hugging Face
 configuration, UI, SQLite v2 ledger, manifests, training, evaluation, model and
