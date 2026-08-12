@@ -18,12 +18,21 @@ from .audio_preview import (
     build_preview_response,
 )
 from .constants import CANDIDATE_ROLES, NEW_LABELS, REVIEW_STATES, SPLITS
+from .confirmed_labels import (
+    append_correction,
+    append_manual_review,
+    get_label_goals,
+    get_label_progress,
+    list_confirmed_batches,
+    update_label_goal,
+)
 from .fingerprints import fingerprint_project
 from .library import import_source
 from .manifests import export_training_manifest
 from .playlists import parse_playlist_text
 from .queues import create_round
 from .splits import audit_split_leakage, freeze_group_splits
+from .trusted_import import commit_trusted_playlist, preflight_trusted_playlist
 
 
 class ProjectCreateRequest(BaseModel):
@@ -74,25 +83,79 @@ class SplitFreezeRequest(BaseModel):
 
 class RoundCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    label: str
     round_number: int
     split: Literal["train", "val", "test"] = "train"
     student_scores: dict[int, float] | None = None
 
 
+    @field_validator("label")
+    @classmethod
+    def validate_label(cls, label: str) -> str:
+        if label not in NEW_LABELS:
+            raise ValueError(f"Unknown extension label: {label}")
+        return label
+
+
 class AnnotationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    states: dict[str, str]
+    label: str
+    state: Literal["positive", "negative", "uncertain"]
     note: str = ""
 
-    @field_validator("states")
+    @field_validator("label")
     @classmethod
-    def validate_states(cls, states: dict[str, str]) -> dict[str, str]:
-        if set(states) != set(NEW_LABELS):
-            raise ValueError("Annotation request must contain exactly all three labels.")
-        invalid = {state for state in states.values() if state not in REVIEW_STATES}
-        if invalid:
-            raise ValueError("Unknown annotation states: " + ", ".join(sorted(invalid)))
-        return states
+    def validate_label(cls, label: str) -> str:
+        if label not in NEW_LABELS:
+            raise ValueError(f"Unknown extension label: {label}")
+        return label
+
+
+class GoalUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    positive_target: int
+    negative_target: int
+
+
+class TrustedPlaylistRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    playlist_path: str
+    label: str
+    state: Literal["positive", "negative"]
+
+    @field_validator("playlist_path")
+    @classmethod
+    def validate_path(cls, path: str) -> str:
+        normalized = path.strip()
+        if not normalized:
+            raise ValueError("playlist_path must not be blank")
+        return normalized
+
+    @field_validator("label")
+    @classmethod
+    def validate_label(cls, label: str) -> str:
+        if label not in NEW_LABELS:
+            raise ValueError(f"Unknown extension label: {label}")
+        return label
+
+
+class TrustedPlaylistCommitRequest(TrustedPlaylistRequest):
+    expected_playlist_sha256: str
+
+
+class CorrectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    track_id: int
+    label: str
+    state: Literal["positive", "negative", "uncertain"]
+    reason: str
+
+    @field_validator("label")
+    @classmethod
+    def validate_label(cls, label: str) -> str:
+        if label not in NEW_LABELS:
+            raise ValueError(f"Unknown extension label: {label}")
+        return label
 
 
 def _http_error(error: Exception) -> HTTPException:
@@ -141,12 +204,17 @@ def _queue_item_payload(
     with store.connection() as connection:
         row = connection.execute(
             "SELECT queue_items.id AS queue_item_id, queue_items.round_number, "
+            "queue_items.label AS active_label, "
             "tracks.id AS track_id, tracks.path, tracks.duration_seconds, "
             "tracks.split FROM queue_items "
             "JOIN tracks ON tracks.id = queue_items.track_id "
             "WHERE queue_items.project_id = ? AND queue_items.id = ?",
             (project_id, queue_item_id),
         ).fetchone()
+        if row is None:
+            raise ValueError(
+                f"Unknown queue item ID for project {project_id}: {queue_item_id}"
+            )
         source_rows = connection.execute(
             "SELECT DISTINCT track_sources.suggested_label FROM track_sources "
             "JOIN queue_items ON queue_items.track_id = track_sources.track_id "
@@ -158,11 +226,12 @@ def _queue_item_payload(
             "WHERE queue_item_id = ? ORDER BY label",
             (queue_item_id,),
         ).fetchall()
-    if row is None:
-        raise ValueError(f"Unknown queue item ID for project {project_id}: {queue_item_id}")
-    current = store.current_annotations(queue_item_id)
-    notes = [value for value in current.values() if value["note"]]
-    latest_note = max(notes, key=lambda value: value["created_at"])["note"] if notes else ""
+        current = connection.execute(
+            "SELECT state, note FROM confirmed_label_events "
+            "WHERE project_id = ? AND track_id = ? AND label = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (project_id, int(row["track_id"]), str(row["active_label"])),
+        ).fetchone()
     return {
         "queue_item_id": int(row["queue_item_id"]),
         "track_id": int(row["track_id"]),
@@ -170,16 +239,14 @@ def _queue_item_payload(
         "duration_seconds": float(row["duration_seconds"]),
         "split": str(row["split"]),
         "round_number": int(row["round_number"]),
+        "active_label": str(row["active_label"]),
         "source_labels": sorted(str(source["suggested_label"]) for source in source_rows),
         "candidate_roles": {
             str(credit["label"]): str(credit["candidate_role"])
             for credit in credit_rows
         },
-        "states": {
-            label: current.get(label, {}).get("state", "unreviewed")
-            for label in NEW_LABELS
-        },
-        "note": latest_note,
+        "state": "unreviewed" if current is None else str(current["state"]),
+        "note": "" if current is None else str(current["note"]),
         "audio_url": f"/api/projects/{project_id}/audio/{int(row['track_id'])}",
     }
 
@@ -191,21 +258,15 @@ def _next_incomplete_queue_item(
 ) -> dict[str, object] | None:
     with store.connection() as connection:
         row = connection.execute(
-            "WITH latest AS ("
-            "  SELECT events.queue_item_id, events.label, events.state "
-            "  FROM annotation_events AS events "
-            "  JOIN ("
-            "    SELECT queue_item_id, label, MAX(id) AS latest_id "
-            "    FROM annotation_events GROUP BY queue_item_id, label"
-            "  ) AS selected ON selected.latest_id = events.id"
-            ") "
             "SELECT queue_items.id FROM queue_items "
-            "LEFT JOIN latest ON latest.queue_item_id = queue_items.id "
             "WHERE queue_items.project_id = ? "
             "AND (? IS NULL OR queue_items.id > ?) "
-            "GROUP BY queue_items.id "
-            "HAVING SUM(CASE WHEN latest.state IN "
-            "('positive', 'negative', 'uncertain') THEN 1 ELSE 0 END) < 3 "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM confirmed_label_events AS events "
+            "  WHERE events.project_id = queue_items.project_id "
+            "  AND events.track_id = queue_items.track_id "
+            "  AND events.label = queue_items.label"
+            ") "
             "ORDER BY queue_items.id LIMIT 1",
             (project_id, after_id, after_id),
         ).fetchone()
@@ -234,6 +295,117 @@ def create_app(
     def create_project(request: ProjectCreateRequest) -> dict[str, int]:
         try:
             return {"project_id": store.create_project(request.name)}
+        except (ValueError, RuntimeError) as error:
+            raise _http_error(error) from error
+
+    @app.get("/api/projects/{project_id}/goals")
+    def goals(project_id: int) -> list[dict[str, object]]:
+        try:
+            return [asdict(goal) for goal in get_label_goals(store, project_id)]
+        except (ValueError, RuntimeError) as error:
+            raise _http_error(error) from error
+
+    @app.patch("/api/projects/{project_id}/goals/{label}")
+    def change_goal(
+        project_id: int,
+        label: str,
+        request: GoalUpdateRequest,
+    ) -> dict[str, object]:
+        try:
+            return asdict(
+                update_label_goal(
+                    store,
+                    project_id,
+                    label,
+                    request.positive_target,
+                    request.negative_target,
+                )
+            )
+        except (ValueError, RuntimeError) as error:
+            raise _http_error(error) from error
+
+    @app.get("/api/projects/{project_id}/confirmed-progress")
+    def confirmed_progress(project_id: int) -> list[dict[str, object]]:
+        try:
+            return [asdict(item) for item in get_label_progress(store, project_id)]
+        except (ValueError, RuntimeError) as error:
+            raise _http_error(error) from error
+
+    @app.get("/api/projects/{project_id}/confirmed-batches/{label}")
+    def confirmed_batches(project_id: int, label: str) -> list[dict[str, object]]:
+        try:
+            return [
+                asdict(item)
+                for item in list_confirmed_batches(store, project_id, label)
+            ]
+        except (ValueError, RuntimeError) as error:
+            raise _http_error(error) from error
+
+    @app.post("/api/projects/{project_id}/trusted-playlists/preflight")
+    def trusted_preflight(
+        project_id: int,
+        request: TrustedPlaylistRequest,
+    ) -> dict[str, object]:
+        try:
+            result = preflight_trusted_playlist(
+                store,
+                project_id,
+                Path(request.playlist_path),
+                request.label,
+                request.state,
+            )
+            return {
+                "playlist_path": result.playlist_path,
+                "playlist_sha256": result.playlist_sha256,
+                "label": result.label,
+                "state": result.state,
+                "discovered": result.discovered,
+                "new_count": result.new_count,
+                "existing_count": result.existing_count,
+                "missing_paths": result.missing_paths,
+                "duplicate_paths": result.duplicate_paths,
+                "invalid_paths": result.invalid_paths,
+                "conflict_paths": result.conflict_paths,
+                "clean": result.clean,
+            }
+        except (ValueError, RuntimeError) as error:
+            raise _http_error(error) from error
+
+    @app.post("/api/projects/{project_id}/trusted-playlists/commit")
+    def trusted_commit(
+        project_id: int,
+        request: TrustedPlaylistCommitRequest,
+    ) -> dict[str, object]:
+        try:
+            return asdict(
+                commit_trusted_playlist(
+                    store,
+                    project_id,
+                    Path(request.playlist_path),
+                    request.label,
+                    request.state,
+                    request.expected_playlist_sha256,
+                )
+            )
+        except (ValueError, RuntimeError) as error:
+            raise _http_error(error) from error
+
+    @app.post("/api/projects/{project_id}/confirmed-labels/correct")
+    def correct_label(
+        project_id: int,
+        request: CorrectionRequest,
+    ) -> dict[str, object]:
+        try:
+            return asdict(
+                append_correction(
+                    store,
+                    project_id,
+                    request.track_id,
+                    request.label,
+                    request.state,
+                    request.reason,
+                )
+            )
         except (ValueError, RuntimeError) as error:
             raise _http_error(error) from error
 
@@ -299,6 +471,7 @@ def create_app(
             summary = create_round(
                 store,
                 project_id,
+                request.label,
                 request.round_number,
                 split=request.split,
                 student_scores=request.student_scores,
@@ -332,13 +505,25 @@ def create_app(
         request: AnnotationRequest,
     ) -> dict[str, object]:
         try:
-            _queue_item_payload(store, project_id, queue_item_id)
-            event_ids = store.append_review(
+            payload = _queue_item_payload(store, project_id, queue_item_id)
+            if payload["active_label"] != request.label:
+                raise ValueError(
+                    f"Queue item label is {payload['active_label']}, "
+                    f"not requested label {request.label}"
+                )
+            event_id = append_manual_review(
+                store,
+                project_id,
                 queue_item_id,
-                request.states,
+                request.label,
+                request.state,
                 request.note,
             )
-            return {"event_ids": event_ids, "states": request.states}
+            return {
+                "event_id": event_id,
+                "label": request.label,
+                "state": request.state,
+            }
         except (ValueError, RuntimeError) as error:
             raise _http_error(error) from error
 
@@ -346,34 +531,18 @@ def create_app(
     def progress(project_id: int) -> dict[str, int]:
         with store.connection() as connection:
             rows = connection.execute(
-                "WITH latest AS ("
-                "  SELECT events.queue_item_id, events.label, events.state "
-                "  FROM annotation_events AS events "
-                "  JOIN ("
-                "    SELECT queue_item_id, label, MAX(id) AS latest_id "
-                "    FROM annotation_events GROUP BY queue_item_id, label"
-                "  ) AS selected ON selected.latest_id = events.id"
-                ") "
-                "SELECT queue_items.id, latest.label, latest.state "
-                "FROM queue_items LEFT JOIN latest "
-                "ON latest.queue_item_id = queue_items.id "
-                "WHERE queue_items.project_id = ? ORDER BY queue_items.id",
+                "SELECT queue_items.id, EXISTS("
+                "  SELECT 1 FROM confirmed_label_events AS events "
+                "  WHERE events.project_id = queue_items.project_id "
+                "  AND events.track_id = queue_items.track_id "
+                "  AND events.label = queue_items.label"
+                ") AS completed "
+                "FROM queue_items WHERE queue_items.project_id = ? "
+                "ORDER BY queue_items.id",
                 (project_id,),
             ).fetchall()
-        reviewed_states: dict[int, dict[str, str]] = {}
-        for row in rows:
-            queue_item_id = int(row["id"])
-            reviewed_states.setdefault(queue_item_id, {})
-            if row["label"] is not None:
-                reviewed_states[queue_item_id][str(row["label"])] = str(row["state"])
-        total = len(reviewed_states)
-        completed = sum(
-            all(
-                states.get(label) in {"positive", "negative", "uncertain"}
-                for label in NEW_LABELS
-            )
-            for states in reviewed_states.values()
-        )
+        total = len(rows)
+        completed = sum(bool(row["completed"]) for row in rows)
         return {"total": total, "completed": completed, "remaining": total - completed}
 
     @app.get("/api/projects/{project_id}/export")

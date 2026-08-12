@@ -90,9 +90,15 @@ class AnnotationWorkflowTests(TestCase):
             self.assertEqual(sum(split_summary.split_counts.values()), 12)
             self.assertTrue(audit_split_leakage(store, project_id).clean)
 
-            val_round = create_round(store, project_id, 1, split="val")
-            test_round = create_round(store, project_id, 1, split="test")
-            train_round = create_round(store, project_id, 1, split="train")
+            val_round = create_round(
+                store, project_id, NEW_LABELS[0], 1, split="val"
+            )
+            test_round = create_round(
+                store, project_id, NEW_LABELS[0], 1, split="test"
+            )
+            train_round = create_round(
+                store, project_id, NEW_LABELS[0], 1, split="train"
+            )
             queue_item_ids = (
                 val_round.queue_item_ids
                 + test_round.queue_item_ids

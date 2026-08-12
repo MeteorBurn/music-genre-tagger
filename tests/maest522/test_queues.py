@@ -21,7 +21,7 @@ class QueueConstructionTests(TestCase):
             )
         return store, project_id
 
-    def test_enforces_label_quotas_hard_negatives_and_overlap_deduplication(self) -> None:
+    def test_enforces_one_label_quota_and_allows_cross_label_reuse(self) -> None:
         with TemporaryDirectory() as temp_dir:
             store, project_id = self._create_frozen_project(Path(temp_dir))
             now = datetime.now(timezone.utc).isoformat()
@@ -71,14 +71,24 @@ class QueueConstructionTests(TestCase):
                             (track_id, sources[(label, role)], label),
                         )
 
-            summary = create_round(store, project_id, round_number=1)
-
-            self.assertEqual(summary.source_counts, {label: 100 for label in NEW_LABELS})
-            self.assertEqual(
-                summary.hard_negative_counts,
-                {label: 25 for label in NEW_LABELS},
+            summary = create_round(
+                store,
+                project_id,
+                NEW_LABELS[0],
+                round_number=1,
             )
-            self.assertEqual(summary.unique_tracks, 298)
+
+            self.assertEqual(summary.label, NEW_LABELS[0])
+            self.assertEqual(summary.source_count, 100)
+            self.assertEqual(summary.hard_negative_count, 25)
+            self.assertEqual(summary.unique_tracks, 100)
+            second_label = create_round(
+                store,
+                project_id,
+                NEW_LABELS[1],
+                round_number=1,
+            )
+            self.assertEqual(second_label.unique_tracks, 100)
             with store.connection() as connection:
                 queue_count = connection.execute(
                     "SELECT COUNT(*) FROM queue_items"
@@ -86,8 +96,8 @@ class QueueConstructionTests(TestCase):
                 credit_count = connection.execute(
                     "SELECT COUNT(*) FROM queue_credits"
                 ).fetchone()[0]
-            self.assertEqual(queue_count, 298)
-            self.assertEqual(credit_count, 300)
+            self.assertEqual(queue_count, 200)
+            self.assertEqual(credit_count, 200)
 
     def test_rejects_student_scores_for_blind_holdouts(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -97,6 +107,7 @@ class QueueConstructionTests(TestCase):
                 create_round(
                     store,
                     project_id,
+                    NEW_LABELS[0],
                     round_number=1,
                     split="val",
                     student_scores={1: 0.9},
@@ -110,6 +121,7 @@ class QueueConstructionTests(TestCase):
                 create_round(
                     store,
                     project_id,
+                    NEW_LABELS[0],
                     round_number=2,
                     split="train",
                     student_scores={},

@@ -57,6 +57,51 @@ class CorrectionResult:
     created_at: str
 
 
+def append_manual_review(
+    store: AnnotationStore,
+    project_id: int,
+    queue_item_id: int,
+    label: str,
+    state: str,
+    note: str = "",
+) -> int:
+    """Append one queue-bound human review for the queue item's exact label."""
+    _require_label(label)
+    if state not in CONFIRMED_STATES:
+        raise ValueError(f"Unknown confirmed annotation state: {state}")
+    created_at = datetime.now(timezone.utc).isoformat()
+    with store.connection() as connection:
+        row = connection.execute(
+            "SELECT queue_items.track_id, queue_items.label "
+            "FROM queue_items WHERE queue_items.id = ? "
+            "AND queue_items.project_id = ?",
+            (queue_item_id, project_id),
+        ).fetchone()
+        if row is None:
+            raise ValueError(
+                f"Unknown queue item ID for project {project_id}: {queue_item_id}"
+            )
+        queue_label = str(row["label"])
+        if queue_label != label:
+            raise ValueError(
+                f"Queue item label is {queue_label}, not requested label {label}"
+            )
+        cursor = connection.execute(
+            "INSERT INTO confirmed_label_events("
+            "project_id, track_id, label, state, event_kind, batch_id, note, "
+            "created_at) VALUES (?, ?, ?, ?, 'manual_review', NULL, ?, ?)",
+            (
+                project_id,
+                int(row["track_id"]),
+                label,
+                state,
+                note.strip(),
+                created_at,
+            ),
+        )
+    return int(cursor.lastrowid)
+
+
 def _require_label(label: str) -> None:
     if label not in NEW_LABELS:
         raise ValueError(f"Unknown MAEST 522 extension label: {label}")

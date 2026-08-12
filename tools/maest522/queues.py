@@ -20,11 +20,12 @@ HARD_NEGATIVE_SLOTS_PER_LABEL = 25
 
 @dataclass(frozen=True)
 class QueueSummary:
+    label: str
     round_number: int
     split: str
     unique_tracks: int
-    source_counts: dict[str, int]
-    hard_negative_counts: dict[str, int]
+    source_count: int
+    hard_negative_count: int
     queue_item_ids: tuple[int, ...]
 
 
@@ -94,12 +95,15 @@ def _select_label_candidates(
 def create_round(
     store: AnnotationStore,
     project_id: int,
+    label: str,
     round_number: int,
     split: str = "train",
     student_scores: Mapping[int, float] | None = None,
     seed: int = 522,
 ) -> QueueSummary:
     """Create one immutable quota-based queue round."""
+    if label not in NEW_LABELS:
+        raise ValueError(f"Unknown MAEST 522 extension label: {label}")
     if round_number < 1:
         raise ValueError("Round number must be at least 1.")
     if split not in SPLITS:
@@ -112,8 +116,9 @@ def create_round(
     with store.connection() as connection:
         existing_round = connection.execute(
             "SELECT 1 FROM queue_rounds "
-            "WHERE project_id = ? AND round_number = ? AND split = ? LIMIT 1",
-            (project_id, round_number, split),
+            "WHERE project_id = ? AND label = ? AND round_number = ? "
+            "AND split = ? LIMIT 1",
+            (project_id, label, round_number, split),
         ).fetchone()
         if existing_round is not None:
             raise ValueError(
@@ -122,8 +127,9 @@ def create_round(
         if split == "train" and student_scores is not None:
             holdout_rows = connection.execute(
                 "SELECT DISTINCT split FROM queue_rounds "
-                "WHERE project_id = ? AND split IN ('val', 'test')",
-                (project_id,),
+                "WHERE project_id = ? AND label = ? "
+                "AND split IN ('val', 'test')",
+                (project_id, label),
             ).fetchall()
             holdout_splits = {str(row["split"]) for row in holdout_rows}
             if holdout_splits != {"val", "test"}:
@@ -137,52 +143,37 @@ def create_round(
             "JOIN track_sources ON track_sources.track_id = tracks.id "
             "JOIN sources ON sources.id = track_sources.source_id "
             "WHERE tracks.project_id = ? AND tracks.split = ? "
-            "AND track_sources.suggested_label <> '' "
+            "AND track_sources.suggested_label = ? "
             "AND NOT EXISTS ("
-            "    SELECT 1 FROM queue_items WHERE queue_items.track_id = tracks.id"
+            "    SELECT 1 FROM queue_items WHERE queue_items.track_id = tracks.id "
+            "    AND queue_items.project_id = tracks.project_id "
+            "    AND queue_items.label = ?"
             ")",
-            (project_id, split),
+            (project_id, split, label, label),
         ).fetchall()
         credit_rows = connection.execute(
-            "SELECT queue_credits.label, COUNT(*) AS credit_count "
+            "SELECT COUNT(*) AS credit_count "
             "FROM queue_credits "
             "JOIN queue_items ON queue_items.id = queue_credits.queue_item_id "
-            "WHERE queue_items.project_id = ? GROUP BY queue_credits.label",
-            (project_id,),
+            "WHERE queue_items.project_id = ? AND queue_credits.label = ?",
+            (project_id, label),
         ).fetchall()
 
-    prior_credits = {str(row["label"]): int(row["credit_count"]) for row in credit_rows}
-    candidate_pools: dict[str, dict[str, set[int]]] = {
-        label: defaultdict(set) for label in NEW_LABELS
-    }
+    prior_credits = int(credit_rows[0]["credit_count"]) if credit_rows else 0
+    candidate_pool: dict[str, set[int]] = defaultdict(set)
     for row in rows:
-        label = str(row["suggested_label"])
-        if label in candidate_pools:
-            candidate_pools[label][str(row["candidate_role"])].add(int(row["id"]))
-
-    selections_by_label: dict[str, list[tuple[int, str]]] = {}
-    for label in NEW_LABELS:
-        remaining_cap = max(
-            0,
-            MAX_CANDIDATES_PER_LABEL - prior_credits.get(label, 0),
-        )
-        quota = min(ROUND_SIZE_PER_LABEL, remaining_cap)
-        selections_by_label[label] = _select_label_candidates(
-            candidate_pools[label],
-            quota,
-            label,
-            round_number,
-            seed,
-            student_scores,
-        )
-
-    selected_track_ids = sorted(
-        {
-            track_id
-            for selections in selections_by_label.values()
-            for track_id, _role in selections
-        }
+        candidate_pool[str(row["candidate_role"])].add(int(row["id"]))
+    remaining_cap = max(0, MAX_CANDIDATES_PER_LABEL - prior_credits)
+    quota = min(ROUND_SIZE_PER_LABEL, remaining_cap)
+    selections = _select_label_candidates(
+        candidate_pool,
+        quota,
+        label,
+        round_number,
+        seed,
+        student_scores,
     )
+    selected_track_ids = sorted(track_id for track_id, _role in selections)
     acquisition_kind = (
         "blind_holdout"
         if split in {"val", "test"}
@@ -195,10 +186,11 @@ def create_round(
     with store.connection() as connection:
         connection.execute(
             "INSERT INTO queue_rounds("
-            "project_id, round_number, split, acquisition_kind, created_at"
-            ") VALUES (?, ?, ?, ?, ?)",
+            "project_id, label, round_number, split, acquisition_kind, created_at"
+            ") VALUES (?, ?, ?, ?, ?, ?)",
             (
                 project_id,
+                label,
                 round_number,
                 split,
                 acquisition_kind,
@@ -209,12 +201,13 @@ def create_round(
             score = None if student_scores is None else student_scores.get(track_id)
             cursor = connection.execute(
                 "INSERT INTO queue_items("
-                "project_id, track_id, round_number, acquisition_kind, "
+                "project_id, track_id, label, round_number, acquisition_kind, "
                 "acquisition_score, created_at"
-                ") VALUES (?, ?, ?, ?, ?, ?)",
+                ") VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     project_id,
                     track_id,
+                    label,
                     round_number,
                     acquisition_kind,
                     score,
@@ -222,29 +215,21 @@ def create_round(
                 ),
             )
             queue_item_by_track[track_id] = int(cursor.lastrowid)
-        for label, selections in selections_by_label.items():
-            for track_id, role in selections:
-                connection.execute(
-                    "INSERT INTO queue_credits(queue_item_id, label, candidate_role) "
-                    "VALUES (?, ?, ?)",
-                    (queue_item_by_track[track_id], label, role),
-                )
+        for track_id, role in selections:
+            connection.execute(
+                "INSERT INTO queue_credits(queue_item_id, label, candidate_role) "
+                "VALUES (?, ?, ?)",
+                (queue_item_by_track[track_id], label, role),
+            )
 
-    source_counts = {
-        label: len(selections_by_label[label]) for label in NEW_LABELS
-    }
-    hard_negative_counts = {
-        label: sum(
-            role == "hard_negative_candidate"
-            for _track_id, role in selections_by_label[label]
-        )
-        for label in NEW_LABELS
-    }
     return QueueSummary(
+        label=label,
         round_number=round_number,
         split=split,
         unique_tracks=len(selected_track_ids),
-        source_counts=source_counts,
-        hard_negative_counts=hard_negative_counts,
+        source_count=len(selections),
+        hard_negative_count=sum(
+            role == "hard_negative_candidate" for _track_id, role in selections
+        ),
         queue_item_ids=tuple(queue_item_by_track[track_id] for track_id in selected_track_ids),
     )
