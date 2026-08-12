@@ -1,0 +1,45 @@
+---
+license: other
+task_categories:
+  - audio-classification
+tags:
+  - music
+  - multi-label-classification
+  - annotations
+---
+
+# MAEST 522 annotation metadata
+
+This dataset artifact contains metadata and annotation states only.
+{{ audio_rights }} No redistribution right for referenced audio is implied.
+
+## Annotation
+
+{{ annotation_protocol }} Each of the three labels uses `positive`, `negative`,
+or `uncertain`. Uncertain cells are masked during training. Hard negatives are
+explicit reviewed negatives, not implicit absence labels.
+
+## Leakage prevention
+
+Exact SHA-256, acoustic fingerprints, release identity, and normalized artist
+identity define duplicate groups. Groups are assigned once to train/validation/
+test and audited before export. Validation and test were blind before student
+training. Split audit SHA-256: `{{ split_audit_sha256 }}`.
+
+## Portable JSONL fields
+
+`track_id`, `group_id`, relative `audio_ref`, `split`, `duration_seconds`,
+`window_offsets_seconds`, `source_labels`, `candidate_roles`, and per-label
+annotation states. Absolute local paths and audio payloads are excluded.
+
+## Counts
+
+```json
+{{ dataset_summary_json }}
+```
+
+## Provenance boundaries
+
+Playlist/folder provenance records candidate discovery, not ownership or
+consent to redistribute audio. Users of the metadata must obtain their own
+lawful access to audio and review local consent/licensing requirements.
