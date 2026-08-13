@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import importlib
+import importlib.metadata
 import json
 import logging
 import platform
@@ -32,7 +33,7 @@ CPU_WHEEL_INDEX = "https://download.pytorch.org/whl/cpu"
 
 def _check_python_version() -> Tuple[bool, str, str]:
     current = sys.version_info
-    required = (3, 9)
+    required = (3, 10)
     ok = current >= required
     version_str = f"{current.major}.{current.minor}.{current.micro}"
     return ok, version_str, f">= {required[0]}.{required[1]}"
@@ -74,6 +75,14 @@ def _check_maest_api() -> Tuple[bool, str]:
         return True, "get_maest available"
     except Exception as exc:
         return False, str(exc)
+
+
+def _check_maest_version(required_version: str = "0.2.0") -> Tuple[bool, str, str]:
+    try:
+        installed_version = importlib.metadata.version("maest-infer")
+    except importlib.metadata.PackageNotFoundError:
+        return False, "", required_version
+    return installed_version == required_version, installed_version, required_version
 
 
 def _check_ffmpeg() -> Tuple[bool, str]:
@@ -504,6 +513,18 @@ def run_environment_checks(
             logging.error("Module missing: %s (%s)", import_name, error)
             missing_packages.append(package_name)
 
+    maest_version_ok, installed_maest_version, required_maest_version = (
+        _check_maest_version()
+    )
+    if maest_version_ok:
+        logging.info("MAEST version: %s", installed_maest_version)
+    else:
+        logging.error(
+            "MAEST version mismatch: installed %s, required %s",
+            installed_maest_version or "not installed",
+            required_maest_version,
+        )
+
     maest_ok, maest_msg = _check_maest_api()
     if maest_ok:
         logging.info("MAEST API check: %s", maest_msg)
@@ -604,6 +625,7 @@ def run_environment_checks(
     hard_fail = (
         (not ok_py)
         or bool(missing_unique)
+        or (not maest_version_ok)
         or (not maest_ok)
         or (not sqlite_ok)
         or (not checkpoint_path_ok)

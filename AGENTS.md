@@ -18,7 +18,7 @@ Core properties:
 ```text
 src/
   main.py        - CLI entrypoint
-  pipeline.py    - pipeline orchestration, inference, stage flow
+  pipeline.py    - pipeline orchestration, multi-window inference, stage flow
   environment.py - dependency and environment checks
   extractor.py   - database -> genres.xlsx export
   report.py      - report generation and library summaries
@@ -40,7 +40,8 @@ run_pipeline(stage="analyze")
   -> init_db(tracks.db)
   -> find_audio_files()
   -> get_existing_hashes()
-  -> analyze_audio_file()
+  -> analyze_audio_file() [up to three clamped/deduplicated windows]
+  -> mean aggregate window scores before top-three selection
   -> upsert_track()
   -> optionally export_tracks_json()
 
@@ -77,8 +78,10 @@ Columns:
 - `labels`
 - `confidences`
 - `model`
-- `audio_segment_offset`
+- `audio_segment_offsets`
 - `audio_segment_duration`
+- `audio_segment_count`
+- `aggregation`
 - `error`
 - `status`
 - `updated_at`
@@ -89,6 +92,8 @@ Storage rules:
 - `labels` and `confidences` are JSON strings in the database
 - indexes on `path` and `status`
 - `PRAGMA journal_mode=WAL` and `PRAGMA busy_timeout=30000` set on every connection
+- Schema version is `2`; an existing `tracks` table at another version is
+  incompatible and must be moved or deleted before use.
 - `status` is a single field with these values:
   - `analysis_success`
   - `analysis_error`
@@ -147,6 +152,10 @@ Excel formatting applied automatically:
 - `megabytes` and `seconds` are truncated to 2 decimals, not rounded mathematically.
 - `genres.xlsx` is fully rebuilt from the database, not appended incrementally.
 - Rows with `tag_success` are skipped on the next tagging run (incremental safety).
+- Analysis uses up to three 30-second windows centered at 20%, 50%, and 80% of
+  the track. Starts are clamped, duplicate windows are removed, and tracks no
+  longer than one window use one window.
+- Window prediction scores are mean-aggregated before top-three selection.
 
 ## Module contracts
 
@@ -155,6 +164,9 @@ Excel formatting applied automatically:
 - `get_config()` returns the full runtime config dict.
 - `WRITE_JSON` is a runtime config constant placed after `MAX_FILES` in the Runtime block.
 - `get_config()` returns it as `config["write_json"]`.
+- Analysis config uses `AUDIO_WINDOW_DURATION = 30` and
+  `AUDIO_WINDOW_POSITIONS = (0.2, 0.5, 0.8)`; there is no scalar audio-offset
+  configuration.
 - Tagger sub-config keys live under `config["tagger"]`:
   - `genre_source_field` = `"genres"`
   - `file_path_field` = `"path"`
@@ -172,10 +184,14 @@ Excel formatting applied automatically:
 
 - `run_environment_checks(project_dir, models_dir, checkpoint_filename, checkpoint_path_value) -> bool`
   - Returns `True` only if all checks pass and no restart is required.
-  - Hard failures: wrong Python version, missing packages, broken MAEST API, failed SQLite runtime check, invalid checkpoint path, restart required after torch reinstall.
+  - Hard failures: wrong Python version, missing packages, `maest-infer` not
+    exactly `0.2.0`, broken MAEST API, failed SQLite runtime check, invalid
+    checkpoint path, restart required after torch reinstall.
   - Soft behavior: detects the current platform and CUDA support, resolves compatible `torch` / `torchaudio` versions from pip indexes at runtime, and reinstalls the torch stack if the installed build does not match the detected target.
   - FFmpeg absence is a warning only, not a hard failure.
   - `_check_sqlite_runtime()` runs an in-memory smoke test and verifies `sqlite3` is functional.
+  - `_check_maest_version()` reads installed package metadata and requires
+    exactly `maest-infer==0.2.0`.
 
 ### `pipeline.py`
 
@@ -189,6 +205,11 @@ Excel formatting applied automatically:
   - `report_path` = `meta_root / "report.md"`
 - `load_models(config, script_dir) -> Dict` — resolves checkpoint, loads MAEST, returns `{"maest": {name: {model, arch, checkpoint, device}}}`.
 - `analyze_audio_file(original_audio_path, models, config) -> Dict` — per-file inference; returns the track payload dict (with `error` key on failure); does NOT write to disk.
+- `select_audio_windows(audio, sample_rate, window_duration_sec, positions)` —
+  creates up to three clamped, deduplicated windows centered at configured
+  track fractions; a short track gets one window.
+- `aggregate_window_predictions(predictions)` — mean-aggregates compatible
+  label-score vectors before `process_predictions()` selects the top three.
 - Analyze timing in logs and reports includes ffmpeg conversion time when conversion is used.
 - `run_analysis_stage(config, script_dir, input_dir, db_path) -> Dict` — calls `init_db`, finds audio, skips existing hashes, runs analysis, calls `upsert_track` per file.
 - `run_excel_stage(config, db_path, excel_path) -> Dict` — delegates to `create_excel_report`.
@@ -200,7 +221,8 @@ Excel formatting applied automatically:
 
 ### `storage.py`
 
-- `init_db(db_path)` — creates schema and indexes; sets WAL mode.
+- `init_db(db_path)` — creates schema version 2 and indexes; sets WAL mode;
+  rejects an existing tracks database with another schema version.
 - `get_existing_hashes(db_path) -> set[str]` — returns all `hash` values from the DB.
 - `upsert_track(db_path, track_data)` — flattens nested track payload and inserts or updates by `hash`.
 - `build_excel_dataframe(db_path) -> pd.DataFrame` — converts DB rows into the fixed Excel column shape.
@@ -253,6 +275,8 @@ Format dispatch table:
 
 - Do not upgrade dependency versions unless explicitly requested.
 - `requirements.txt` pins baseline `torch`, `torchaudio`, `torchvision` without CUDA specifiers.
+- `maest-infer` is pinned to exactly `0.2.0`; `_check_maest_version()` makes
+  any other installed version a hard environment-check failure.
 - At runtime, `environment.py` detects NVIDIA GPU via `nvidia-smi`, reads the reported CUDA version, chooses the matching torch wheel index per platform, and resolves the latest compatible `torch` / `torchaudio` pair from that index before installation.
 - Windows selection rules:
   - CPU: use the default pip index.
@@ -300,9 +324,10 @@ Formats requiring ffmpeg produce a temporary WAV file in the system temp directo
 
 Run before finishing changes:
 
-1. `python -m py_compile src/config.py src/environment.py src/pipeline.py src/extractor.py src/tagger.py src/report.py src/main.py src/storage.py`
-2. `python src/main.py --help`
-3. if analysis logic changed, smoke test one track
-4. verify `genres.xlsx` columns and ordering
-5. verify tag status sync back into `tracks.db`
-6. ensure no hardcoded machine-specific paths in source or docs
+1. `python -m unittest discover -s tests -v`
+2. `python -m py_compile src/config.py src/environment.py src/pipeline.py src/extractor.py src/tagger.py src/report.py src/main.py src/storage.py`
+3. `python src/main.py --help`
+4. if analysis logic changed, smoke test one explicitly selected track in a temporary output directory; verify three stored offsets and mean aggregation for a sufficiently long track
+5. verify `genres.xlsx` columns and ordering
+6. verify tag status sync back into `tracks.db`
+7. ensure no hardcoded machine-specific paths in source or docs

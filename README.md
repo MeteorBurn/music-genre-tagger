@@ -49,8 +49,9 @@ Your Music Library
 │  1. ANALYZE                                         │
 │  For each unprocessed track:                        │
 │  • Convert to 16kHz mono (ffmpeg if needed)         │
-│  • Trim to analysis window (default: 60s–90s)       │
-│  • Run MAEST inference → top-N genres + confidence  │
+│  • Select up to three 30s windows at 20%, 50%, 80%  │
+│  • Clamp/dedupe starts; short tracks use one window │
+│  • Mean window scores, then select top-three genres │
 │  • Save result to tracks.db                         │
 └───────────────────────┬─────────────────────────────┘
                         │  report.md updated ✓
@@ -101,6 +102,8 @@ music-genre-tagger/
 
 ## 🚀 Setup
 
+Python 3.10 or newer is required.
+
 **Step 1 — Create virtual environment:**
 
 ```powershell
@@ -123,6 +126,9 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
+
+`maest-infer` must be exactly version `0.2.0`. The environment check rejects
+any other installed version, including the older `0.1.x` releases.
 
 > 💡 **Torch auto-setup:** On first run, `environment.py` checks the installed PyTorch stack and can reinstall `torch`, `torchaudio`, and `torchvision` automatically if the current build does not match your machine.
 >
@@ -165,6 +171,9 @@ The pipeline will:
 > If `output_directory` is not set, the project root is used as the base.
 > JSON export is disabled by default and can be enabled with `WRITE_JSON = True` in `src/config.py` or with `--write-json`.
 > If export exceeds 100 MB, additional files are written as `tracks_1.json`, `tracks_2.json`, and so on.
+>
+> `tracks.db` uses schema version 2. Existing databases from older versions are
+> incompatible; move or delete the old database before running this version.
 
 ---
 
@@ -247,8 +256,10 @@ Each analyzed track is stored in `tracks.db` and, when JSON export is enabled, e
     "model": "maest_519l_pytorch"
   },
   "analysis_config": {
-    "audio_segment_offset": 60,
-    "audio_segment_duration": 30
+    "audio_segment_offsets": [53.6, 156.5, 259.4],
+    "audio_segment_duration": 30,
+    "audio_segment_count": 3,
+    "aggregation": "mean"
   }
 }
 ```
@@ -256,6 +267,11 @@ Each analyzed track is stored in `tracks.db` and, when JSON export is enabled, e
 If inference fails, an `"error"` key is added at the top level and `genres.labels` / `genres.confidences` remain empty lists.
 
 `hash` is the first 16 characters of the SHA-1 of the resolved file path.
+
+Analysis uses 30-second windows centered at 20%, 50%, and 80% of a track.
+Window starts are clamped to the valid audio range and duplicate starts are
+removed. Tracks no longer than one window use a single window. Scores are
+averaged across the selected windows before the top three genres are chosen.
 
 ---
 
@@ -293,9 +309,9 @@ MAX_FILES = 0          # 0 = no limit
 WRITE_JSON = False     # Export combined JSON snapshot
 
 # Analysis
-NUM_GENRES = 3         # Top-N genres per track
-AUDIO_OFFSET = 60      # Start of analysis window (seconds)
-AUDIO_DURATION = 30    # Length of analysis window (seconds)
+AUDIO_WINDOW_DURATION = 30              # Length of each analysis window
+AUDIO_WINDOW_POSITIONS = (0.2, 0.5, 0.8)  # Window centers as track fractions
+NUM_GENRES = 3                         # Top-N after mean-score aggregation
 AUDIO_EXTENSIONS = [".flac", ".wav", ".aiff", ".aif", ".m4a", ".dsf", ".ape", ".wv", ".mp3"]
 
 # Model

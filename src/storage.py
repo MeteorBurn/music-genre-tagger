@@ -46,8 +46,10 @@ TRACK_COLUMNS = [
     "labels",
     "confidences",
     "model",
-    "audio_segment_offset",
+    "audio_segment_offsets",
     "audio_segment_duration",
+    "audio_segment_count",
+    "aggregation",
     "error",
     "status",
     "updated_at",
@@ -65,11 +67,21 @@ EXCEL_COLUMNS = [
 ]
 
 MAX_TRACKS_JSON_BYTES = 100 * 1024 * 1024
+SCHEMA_VERSION = 2
+INCOMPATIBLE_SCHEMA_MESSAGE = (
+    "Existing tracks database is incompatible with schema version 2; "
+    "move or delete the database before running again."
+)
+
+
+class IncompatibleDatabaseError(RuntimeError):
+    pass
 
 
 def init_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    with _connect(db_path) as connection:
+    connection = _connect(db_path, allow_fresh_schema=True)
+    try:
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS tracks (
@@ -85,18 +97,23 @@ def init_db(db_path: Path) -> None:
                 labels TEXT NOT NULL,
                 confidences TEXT NOT NULL,
                 model TEXT NOT NULL,
-                audio_segment_offset REAL NOT NULL,
+                audio_segment_offsets TEXT NOT NULL,
                 audio_segment_duration REAL NOT NULL,
+                audio_segment_count INTEGER NOT NULL,
+                aggregation TEXT NOT NULL,
                 error TEXT NOT NULL,
                 status TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
             """
         )
+        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_tracks_path ON tracks(path)")
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_tracks_status ON tracks(status)"
         )
+    finally:
+        connection.close()
 
 
 def get_existing_hashes(db_path: Path) -> set[str]:
@@ -201,11 +218,47 @@ def export_tracks_json(db_path: Path, output_path: Path) -> List[Path]:
     return written_paths
 
 
-def _connect(db_path: Path) -> sqlite3.Connection:
+def validate_db_schema(db_path: Path) -> None:
+    if not db_path.is_file():
+        raise RuntimeError(f"Database file not found: {db_path}")
+
+    database_uri = f"{db_path.resolve().as_uri()}?mode=ro"
+    connection = sqlite3.connect(database_uri, timeout=30, uri=True)
+    try:
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA busy_timeout=30000")
+        _validate_schema_connection(connection)
+    finally:
+        connection.close()
+
+
+def _validate_schema_connection(connection: sqlite3.Connection) -> None:
+    tracks_exists = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tracks'"
+    ).fetchone()
+    schema_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+    if not tracks_exists or schema_version != SCHEMA_VERSION:
+        raise IncompatibleDatabaseError(INCOMPATIBLE_SCHEMA_MESSAGE)
+
+
+def _connect(
+    db_path: Path, allow_fresh_schema: bool = False
+) -> sqlite3.Connection:
     connection = sqlite3.connect(str(db_path), timeout=30)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA journal_mode=WAL")
-    connection.execute("PRAGMA busy_timeout=30000")
+    try:
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA busy_timeout=30000")
+        tracks_exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tracks'"
+        ).fetchone()
+        if tracks_exists:
+            _validate_schema_connection(connection)
+        elif not allow_fresh_schema:
+            raise IncompatibleDatabaseError(INCOMPATIBLE_SCHEMA_MESSAGE)
+        connection.execute("PRAGMA journal_mode=WAL")
+    except Exception:
+        connection.close()
+        raise
     return connection
 
 
@@ -299,12 +352,16 @@ def _flatten_track(track_data: Dict[str, Any]) -> Dict[str, Any]:
             list(genres_data.get("confidences", [])), ensure_ascii=False
         ),
         "model": str(genres_data.get("model", "") or "").strip(),
-        "audio_segment_offset": float(
-            analysis_config.get("audio_segment_offset", 0.0) or 0.0
+        "audio_segment_offsets": json.dumps(
+            list(analysis_config.get("audio_segment_offsets", [])), ensure_ascii=False
         ),
         "audio_segment_duration": float(
             analysis_config.get("audio_segment_duration", 0.0) or 0.0
         ),
+        "audio_segment_count": int(
+            analysis_config.get("audio_segment_count", 0) or 0
+        ),
+        "aggregation": str(analysis_config.get("aggregation", "") or "").strip(),
         "error": error_text,
         "status": "analysis_error" if error_text else "analysis_success",
         "updated_at": updated_at,
@@ -334,8 +391,10 @@ def _build_track_payload(record: Dict[str, Any]) -> Dict[str, Any]:
             "model": record["model"],
         },
         "analysis_config": {
-            "audio_segment_offset": record["audio_segment_offset"],
+            "audio_segment_offsets": _load_json_list(record["audio_segment_offsets"]),
             "audio_segment_duration": record["audio_segment_duration"],
+            "audio_segment_count": record["audio_segment_count"],
+            "aggregation": record["aggregation"],
         },
     }
     if str(record["error"]).strip():

@@ -19,6 +19,7 @@ from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
+from typing import Sequence
 from typing import Tuple
 
 import numpy as np
@@ -34,9 +35,11 @@ from report import summarize_database_library
 from report import write_markdown_report
 from storage import export_tracks_json
 from storage import get_existing_hashes
+from storage import IncompatibleDatabaseError
 from storage import init_db
 from storage import upsert_track
 from storage import update_track_statuses
+from storage import validate_db_schema
 from tagger import run_genre_tagging
 
 try:
@@ -279,20 +282,46 @@ def build_audio_hash(audio_path: Path) -> str:
     return hashlib.sha1(normalized_path.encode("utf-8")).hexdigest()[:16]
 
 
-def trim_audio_segment(
-    audio: np.ndarray, sample_rate: int, offset_sec: float, duration_sec: float
-) -> np.ndarray:
+def select_audio_windows(
+    audio: np.ndarray,
+    sample_rate: int,
+    window_duration_sec: float,
+    positions: Sequence[float],
+) -> List[Tuple[float, np.ndarray]]:
     if audio is None or len(audio) == 0:
-        return audio
-    start_sample = int(offset_sec * sample_rate)
-    end_sample = start_sample + int(duration_sec * sample_rate)
+        raise ValueError("Audio cannot be empty.")
+    if sample_rate <= 0:
+        raise ValueError("Sample rate must be positive.")
+    if window_duration_sec <= 0:
+        raise ValueError("Window duration must be positive.")
+    if len(positions) > 3:
+        raise ValueError("at most three window positions are supported.")
+    if any(position < 0 or position > 1 for position in positions):
+        raise ValueError("Window positions must be between 0 and 1.")
 
-    if start_sample >= len(audio):
-        start_sample = 0
-        end_sample = int(duration_sec * sample_rate)
-    if end_sample > len(audio):
-        end_sample = len(audio)
-    return audio[start_sample:end_sample]
+    audio_duration_sec = len(audio) / sample_rate
+    if audio_duration_sec <= window_duration_sec:
+        return [(0.0, audio)]
+
+    window_samples = max(1, int(window_duration_sec * sample_rate))
+    max_start_sec = audio_duration_sec - window_duration_sec
+    start_samples = {
+        int(
+            max(
+                0.0,
+                min(
+                    position * audio_duration_sec - window_duration_sec / 2,
+                    max_start_sec,
+                ),
+            )
+            * sample_rate
+        )
+        for position in positions
+    }
+    return [
+        (start_sample / sample_rate, audio[start_sample : start_sample + window_samples])
+        for start_sample in sorted(start_samples)
+    ]
 
 
 def convert_audio_to_wav(
@@ -477,6 +506,31 @@ def process_predictions(
     return [(labels[index], float(scores_np[index])) for index in idx]
 
 
+def aggregate_window_predictions(
+    window_predictions: Sequence[Tuple[np.ndarray, Sequence[str]]],
+) -> Tuple[np.ndarray, List[str]]:
+    if not window_predictions:
+        raise ValueError("At least one window prediction is required.")
+
+    score_vectors: List[np.ndarray] = []
+    common_labels: Optional[List[str]] = None
+    for scores, labels in window_predictions:
+        score_vector = np.asarray(scores)
+        if score_vector.ndim != 1:
+            raise ValueError("Window prediction scores must be one-dimensional.")
+
+        label_list = list(labels)
+        if len(score_vector) != len(label_list):
+            raise ValueError("Window prediction score count must match label count.")
+        if common_labels is None:
+            common_labels = label_list
+        elif label_list != common_labels:
+            raise ValueError("Window predictions must use the same label vocabulary.")
+        score_vectors.append(score_vector)
+
+    return np.mean(np.stack(score_vectors), axis=0), common_labels or []
+
+
 def process_labels(raw_labels: List[str]) -> List[str]:
     return [label.split("---", 1)[-1] for label in raw_labels]
 
@@ -541,8 +595,10 @@ def analyze_audio_file(
             "model": str(config.get("maest_result_key", DEFAULT_MODEL_KEY)),
         },
         "analysis_config": {
-            "audio_segment_offset": config["audio_offset"],
-            "audio_segment_duration": config["audio_duration"],
+            "audio_segment_offsets": [],
+            "audio_segment_duration": config["audio_window_duration"],
+            "audio_segment_count": 0,
+            "aggregation": "mean",
         },
         "_converted_with_ffmpeg": bool(should_convert),
     }
@@ -561,16 +617,19 @@ def analyze_audio_file(
                 "seconds": duration_seconds,
             }
 
-        audio = trim_audio_segment(
+        windows = select_audio_windows(
             audio,
             config["sample_rate"],
-            config["audio_offset"],
-            config["audio_duration"],
+            config["audio_window_duration"],
+            config["audio_window_positions"],
         )
-        if audio is None or len(audio) < config["sample_rate"] * 0.1:
-            raise ValueError("Audio segment is too short after trimming")
-
-        audio_tensor = torch.from_numpy(audio).float()
+        offsets = [offset for offset, _ in windows]
+        json_data["analysis_config"] = {
+            "audio_segment_offsets": offsets,
+            "audio_segment_duration": config["audio_window_duration"],
+            "audio_segment_count": len(windows),
+            "aggregation": "mean",
+        }
         best_result: Dict[str, Any] = {
             "labels": [],
             "confidences": [],
@@ -580,15 +639,18 @@ def analyze_audio_file(
             top_n = int(config.get("num_genres", 3) or 3)
             model = maest_data["model"]
             device = maest_data["device"]
-            wav = audio_tensor.to(device)
+            window_predictions: List[Tuple[np.ndarray, Sequence[str]]] = []
+            for _, window in windows:
+                wav = torch.from_numpy(window).float().to(device)
+                with torch.no_grad():
+                    scores, labels = model.predict_labels(wav)
+                    if device == "cuda":
+                        torch.cuda.synchronize()
+                window_predictions.append((scores, labels))
 
-            with torch.no_grad():
-                scores, labels = model.predict_labels(wav)
-                if device == "cuda":
-                    torch.cuda.synchronize()
-
-            cleaned_labels = process_labels(list(labels))
-            structured = process_predictions(np.asarray(scores), cleaned_labels, top_n)
+            mean_scores, raw_labels = aggregate_window_predictions(window_predictions)
+            cleaned_labels = process_labels(raw_labels)
+            structured = process_predictions(mean_scores, cleaned_labels, top_n)
             best_result = {
                 "labels": [label for label, _ in structured],
                 "confidences": [round(score, 4) for _, score in structured],
@@ -710,6 +772,7 @@ def run_excel_stage(
 ) -> Dict[str, Any]:
     if not db_path.is_file():
         raise RuntimeError(f"Database file not found: {db_path}")
+    validate_db_schema(db_path)
     return create_excel_report(db_path, excel_path)
 
 
@@ -719,6 +782,7 @@ def run_tag_stage(
     if not db_path.is_file():
         raise RuntimeError(f"Database file not found: {db_path}")
 
+    validate_db_schema(db_path)
     tag_stats = run_genre_tagging(excel_path, config["tagger"])
     update_track_statuses(db_path, tag_stats.get("status_updates", []))
     return tag_stats
@@ -768,6 +832,7 @@ def run_pipeline(
     success = False
     error_text = ""
     report_status = "running"
+    incompatible_database_failure = False
 
     def refresh_tracks_json() -> None:
         if not config.get("write_json", False):
@@ -778,7 +843,7 @@ def run_pipeline(
 
     def write_current_report() -> None:
         current_library_summary = library_summary
-        if current_library_summary is None:
+        if current_library_summary is None and not incompatible_database_failure:
             current_library_summary = load_best_available_library_summary(
                 runtime_paths.db_path,
                 runtime_paths.excel_path,
@@ -842,12 +907,14 @@ def run_pipeline(
         success = True
         report_status = "completed"
     except Exception as exc:
+        incompatible_database_failure = isinstance(exc, IncompatibleDatabaseError)
         error_text = str(exc)
         report_status = "failed"
         logging.error("Pipeline failed: %s", exc)
         logging.debug(traceback.format_exc())
     finally:
-        refresh_tracks_json()
+        if not incompatible_database_failure:
+            refresh_tracks_json()
         write_current_report()
         logging.info("Report written: %s", runtime_paths.report_path)
 
