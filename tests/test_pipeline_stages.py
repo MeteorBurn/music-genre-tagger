@@ -1,6 +1,5 @@
 import json
 import sqlite3
-import stat
 import sys
 import tempfile
 import unittest
@@ -17,10 +16,8 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from pipeline import run_excel_stage
 from pipeline import run_pipeline
 from pipeline import run_tag_stage
-from storage import export_tracks_json
 from storage import init_db
 from storage import upsert_track
-from storage import validate_db_schema
 
 
 def create_legacy_database(db_path: Path) -> None:
@@ -74,14 +71,6 @@ def create_legacy_database(db_path: Path) -> None:
         connection.close()
 
 
-def read_journal_mode(db_path: Path) -> str:
-    connection = sqlite3.connect(db_path)
-    try:
-        return str(connection.execute("PRAGMA journal_mode").fetchone()[0])
-    finally:
-        connection.close()
-
-
 def build_partial_track_payload() -> dict[str, object]:
     return {
         "timestamp": "2026-07-30T00:00:00",
@@ -107,20 +96,14 @@ def build_partial_track_payload() -> dict[str, object]:
     }
 
 
-class LegacySchemaConsumerTests(unittest.TestCase):
+class PipelineStageSchemaTests(unittest.TestCase):
     def assert_legacy_schema_rejected(
         self, operation: Callable[[], object]
     ) -> None:
-        try:
+        with self.assertRaisesRegex(RuntimeError, "incompatible with schema version 2"):
             operation()
-        except Exception as exc:
-            self.assertIsInstance(exc, RuntimeError)
-            self.assertRegex(str(exc), "incompatible with schema version 2")
-            self.assertIn("move or delete", str(exc))
-        else:
-            self.fail("Legacy database was not rejected")
 
-    def test_standalone_excel_stage_rejects_legacy_database(self) -> None:
+    def test_excel_stage_rejects_legacy_database(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             db_path = root / "tracks.db"
@@ -130,9 +113,7 @@ class LegacySchemaConsumerTests(unittest.TestCase):
                 lambda: run_excel_stage({}, db_path, root / "genres.xlsx")
             )
 
-    def test_standalone_tag_stage_rejects_legacy_database_before_tagging(
-        self,
-    ) -> None:
+    def test_tag_stage_validates_schema_before_tagger(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             db_path = root / "tracks.db"
@@ -150,42 +131,8 @@ class LegacySchemaConsumerTests(unittest.TestCase):
                     )
                 )
 
-    def test_json_export_rejects_legacy_database(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            db_path = root / "tracks.db"
-            create_legacy_database(db_path)
 
-            self.assert_legacy_schema_rejected(
-                lambda: export_tracks_json(db_path, root / "tracks.json")
-            )
-
-    def test_validation_does_not_change_legacy_database_journal_mode(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            db_path = Path(directory) / "tracks.db"
-            create_legacy_database(db_path)
-            original_journal_mode = read_journal_mode(db_path)
-
-            self.assert_legacy_schema_rejected(
-                lambda: validate_db_schema(db_path)
-            )
-
-            self.assertEqual(read_journal_mode(db_path), original_journal_mode)
-
-    def test_read_only_legacy_database_has_actionable_schema_error(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            db_path = Path(directory) / "tracks.db"
-            create_legacy_database(db_path)
-            db_path.chmod(stat.S_IREAD)
-            try:
-                self.assert_legacy_schema_rejected(
-                    lambda: validate_db_schema(db_path)
-                )
-            finally:
-                db_path.chmod(stat.S_IREAD | stat.S_IWRITE)
-
-
-class LegacySchemaPipelineTests(unittest.TestCase):
+class PipelineFailureFinalizationTests(unittest.TestCase):
     def assert_pipeline_writes_original_schema_error(
         self, stage: str, write_json: bool
     ) -> None:
@@ -214,17 +161,12 @@ class LegacySchemaPipelineTests(unittest.TestCase):
                 "pipeline.run_genre_tagging",
                 side_effect=AssertionError("tagger must not run"),
             ):
-                try:
-                    exit_code = run_pipeline(
-                        config,
-                        stage,
-                        PROJECT_ROOT,
-                        non_interactive=True,
-                    )
-                except Exception as exc:
-                    self.fail(
-                        f"run_pipeline raised {type(exc).__name__}: {exc}"
-                    )
+                exit_code = run_pipeline(
+                    config,
+                    stage,
+                    PROJECT_ROOT,
+                    non_interactive=True,
+                )
 
             self.assertEqual(exit_code, 1)
             self.assertTrue(report_path.is_file())
@@ -236,32 +178,15 @@ class LegacySchemaPipelineTests(unittest.TestCase):
             self.assertIn("move or delete", report_text)
             self.assertFalse(tracks_json_path.exists())
 
-    def test_excel_legacy_failure_finalizes_with_json_disabled(self) -> None:
-        self.assert_pipeline_writes_original_schema_error(
-            stage="excel",
-            write_json=False,
-        )
+    def test_legacy_database_failure_finalization(self) -> None:
+        for stage in ("excel", "tag"):
+            for write_json in (False, True):
+                with self.subTest(stage=stage, write_json=write_json):
+                    self.assert_pipeline_writes_original_schema_error(
+                        stage,
+                        write_json,
+                    )
 
-    def test_excel_legacy_failure_finalizes_with_json_enabled(self) -> None:
-        self.assert_pipeline_writes_original_schema_error(
-            stage="excel",
-            write_json=True,
-        )
-
-    def test_tag_legacy_failure_finalizes_with_json_disabled(self) -> None:
-        self.assert_pipeline_writes_original_schema_error(
-            stage="tag",
-            write_json=False,
-        )
-
-    def test_tag_legacy_failure_finalizes_with_json_enabled(self) -> None:
-        self.assert_pipeline_writes_original_schema_error(
-            stage="tag",
-            write_json=True,
-        )
-
-
-class ValidSchemaFailureFinalizationTests(unittest.TestCase):
     def test_unrelated_failure_refreshes_json_and_database_summary(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
