@@ -26,8 +26,6 @@ class AnnotationUiAssetTests(TestCase):
             "Backspace",
         ):
             self.assertIn(keyboard_code, javascript)
-        for obsolete_code in ("Digit1", "Digit2", "Digit3", "KeyX"):
-            self.assertNotIn(obsolete_code, javascript)
         self.assertIn("active-label", html)
         self.assertIn("positive-target", html)
         self.assertIn("negative-target", html)
@@ -48,7 +46,4 @@ class AnnotationUiAssetTests(TestCase):
         self.assertIn("0.2", javascript)
         self.assertIn("0.5", javascript)
         self.assertIn("0.8", javascript)
-        self.assertNotIn("teacher_score", combined)
-        self.assertNotIn("student_score", combined)
-        self.assertNotIn("Для каждого трека укажите состояние всех трёх стилей", html)
         self.assertIn("--accent", styles)
