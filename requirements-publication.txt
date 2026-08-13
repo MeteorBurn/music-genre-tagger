@@ -1,0 +1,4 @@
+transformers>=4.38,<5
+huggingface-hub>=0.28,<2
+jinja2>=3,<4
+safetensors>=0.4,<1

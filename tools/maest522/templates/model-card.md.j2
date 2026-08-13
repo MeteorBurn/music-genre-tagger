@@ -1,0 +1,70 @@
+---
+library_name: transformers
+pipeline_tag: audio-classification
+license: other
+base_model: mtg-upf/discogs-maest-30s-pw-129e-519l
+tags:
+  - audio-classification
+  - music
+  - continual-learning
+  - multi-label-classification
+---
+
+# Discogs MAEST 30s 522-label community extension
+
+Version: `{{ version }}`.
+
+This is a native extension of MAEST, not a detached classifier over stored
+embeddings. Labels 0-518 preserve the official `maest-infer==0.2.0` order and
+weights; labels 519-521 append:
+
+{% for label in new_labels %}- `{{ loop.index0 + 519 }}` — `{{ label }}`
+{% endfor %}
+
+## Provenance and license status
+
+- Base model: `mtg-upf/discogs-maest-30s-pw-129e-519l`.
+- Source checkpoint: `{{ source_checkpoint }}`.
+- Source SHA-256: `{{ source_sha256 }}`.
+- Exact-weight license review: {{ license_review_status }}.
+- Code and custom feature-extractor licensing are documented separately from
+  checkpoint weights, annotations, and source-audio rights.
+
+## Intended use
+
+{{ intended_use }}
+
+## Input and inference
+
+Input is mono 16 kHz audio. The exact frontend uses FFT 512, hop 256, 96 Slaney
+mel bins, `log10(1 + 10000 * mel)`, the published MAEST normalization, and
+30-second windows centered at 20%, 50%, and 80%. Window probabilities are mean
+aggregated per track. The model returns 522 multi-label logits; sigmoid is
+applied exactly once by the caller.
+
+## Training and evaluation
+
+The extension used masked manual labels, explicit hard negatives, replay
+distillation against the immutable 519-label teacher, L2-SP, and gradual
+unfreezing. Uncertain annotation cells do not contribute BCE.
+
+Evaluation:
+
+```json
+{{ evaluation_json }}
+```
+
+Native/Hugging Face parity:
+
+```json
+{{ parity_json }}
+```
+
+## Limitations
+
+{{ limitations }} Discogs labels and human genre judgments are subjective.
+The replay library cannot protect old classes absent from its coverage.
+
+## Annotation protocol
+
+{{ annotation_protocol }}

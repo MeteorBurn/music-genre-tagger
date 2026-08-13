@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Разметка MAEST 522</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header>
+    <p class="eyebrow">[MAEST 522] Community extension</p>
+    <h1>Последовательная разметка</h1>
+    <p>Работайте только с одним активным жанром. Интерфейс никогда не переключает жанр автоматически.</p>
+  </header>
+
+  <main>
+    <section class="panel setup-panel">
+      <div class="section-heading">
+        <div>
+          <h2>Проект</h2>
+          <p class="muted">Один проект хранит независимые решения для всех трёх новых классов.</p>
+        </div>
+        <strong id="project-id">Проект не выбран</strong>
+      </div>
+      <div class="inline-form">
+        <input id="project-name" value="maest-522-community" aria-label="Название проекта">
+        <button id="create-project">Создать / открыть</button>
+      </div>
+
+      <hr>
+      <h2>1. Активный жанр</h2>
+      <div class="active-label-row">
+        <label>Жанр<select id="active-label"></select></label>
+        <label>Цель «да»<input id="positive-target" type="number" min="1" value="1000"></label>
+        <label>Цель «нет»<input id="negative-target" type="number" min="1" value="1000"></label>
+        <button id="save-goal">Сохранить цели</button>
+      </div>
+      <div id="confirmed-progress" class="progress-grid" aria-live="polite"></div>
+
+      <hr>
+      <h2>2. Подтверждённый M3U/M3U8</h2>
+      <p class="muted">Укажите локальный путь к готовому плейлисту. Preflight только проверяет; Commit атомарно добавляет подтверждённую разметку.</p>
+      <div class="trusted-grid">
+        <label>Локальный путь к плейлисту
+          <input id="trusted-playlist-path" placeholder="C:\projects\minimal-deep-tech-positive.m3u">
+        </label>
+        <label>Метка плейлиста
+          <select id="trusted-playlist-state">
+            <option value="positive">Да — треки этого жанра</option>
+            <option value="negative">Нет — hard negatives</option>
+          </select>
+        </label>
+        <button id="trusted-preflight">Проверить</button>
+        <button id="trusted-commit" class="primary" disabled>Подтвердить импорт</button>
+      </div>
+      <pre id="trusted-status" aria-live="polite">Сначала выполните проверку плейлиста.</pre>
+
+      <h3>Журнал импортов активного жанра</h3>
+      <div id="confirmed-batches" class="batch-list muted">Импортов пока нет.</div>
+
+      <details>
+        <summary>Дополнительно: кандидаты для ручной прослушки</summary>
+        <div class="grid-form advanced-form">
+          <label>Папка или локальный M3U
+            <input id="source-path" placeholder="D:\Music\Candidates">
+          </label>
+          <label>Роль кандидатов
+            <select id="candidate-role">
+              <option value="positive_candidate">Положительные кандидаты</option>
+              <option value="hard_negative_candidate">Hard negatives</option>
+              <option value="unlabeled_pool">Неразмеченный пул</option>
+            </select>
+          </label>
+          <button id="import-source">Импортировать кандидатов</button>
+        </div>
+        <div class="action-row">
+          <label>Раунд<input id="round-number" type="number" min="1" value="1"></label>
+          <label>Split<select id="round-split"><option>train</option><option>val</option><option>test</option></select></label>
+          <button id="create-round">Создать очередь активного жанра</button>
+        </div>
+      </details>
+
+      <hr>
+      <h2>3. Финализация после всех целей</h2>
+      <p id="finalization-note" class="muted">Сначала соберите цели «да» и «нет» для всех трёх жанров.</p>
+      <div class="action-row">
+        <button id="run-fingerprints" disabled>1. Fingerprints</button>
+        <button id="freeze-splits" disabled>2. Зафиксировать split 70/15/15</button>
+        <button id="export-manifest" disabled>3. Экспортировать manifest</button>
+      </div>
+      <pre id="setup-status" aria-live="polite"></pre>
+    </section>
+
+    <section class="panel review-panel">
+      <div class="review-heading">
+        <div>
+          <p class="eyebrow" id="queue-position">Ручная очередь активного жанра</p>
+          <h2 id="track-name">Нет выбранного трека</h2>
+          <p id="track-context" class="muted"></p>
+        </div>
+        <button id="load-next">Загрузить следующий</button>
+      </div>
+
+      <audio id="audio" controls preload="metadata"></audio>
+      <div class="jump-row">
+        <button data-jump="0.2">J · 20%</button>
+        <button data-jump="0.5">K · 50%</button>
+        <button data-jump="0.8">L · 80%</button>
+      </div>
+
+      <section class="single-label-review">
+        <p class="muted">Сейчас оценивается только:</p>
+        <h3 id="review-label">Активный жанр не выбран</h3>
+        <div id="state-controls" class="state-controls">
+          <button type="button" data-state="positive">P · Да</button>
+          <button type="button" data-state="negative">N · Нет</button>
+          <button type="button" data-state="uncertain">U · Не уверен / пропустить</button>
+        </div>
+      </section>
+      <label class="notes">Заметки<textarea id="notes" rows="3"></textarea></label>
+      <div class="review-actions">
+        <button id="previous-item">Backspace · Назад</button>
+        <button id="save-item" class="primary">Enter · Сохранить и дальше</button>
+      </div>
+      <p id="review-status" aria-live="polite"></p>
+    </section>
+  </main>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

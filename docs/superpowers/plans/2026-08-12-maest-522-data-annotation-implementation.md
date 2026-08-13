@@ -1,8 +1,13 @@
 # MAEST 522 Data and Annotation Implementation Plan
 
+> **Superseded:** the implemented annotation workflow is defined by
+> `2026-08-12-sequential-single-label-annotation.md`. This file is retained as
+> historical design context only.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the local, auditable data foundation and lightweight browser UI used to label Microhouse, RoMinimal, and DeepTech-Minimal in rounds of 100 candidates per genre, up to 1,000 candidates per genre.
+**Goal:** Build the original local annotation prototype for Minimal-Deep-Tech,
+Microhouse, and RoMinimal.
 
 **Architecture:** A small FastAPI service owns an append-only SQLite annotation database. Importers normalize folders and M3U/M3U8 playlists into one track catalog, grouping duplicates before a frozen group split is assigned. Queue construction is split-aware: train candidates may later be model-ranked, while validation and test candidates remain blind. A vanilla HTML/CSS/JavaScript UI reviews every queued track against all three labels.
 
@@ -52,9 +57,9 @@ class AnnotationStoreTest(TestCase):
             store = AnnotationStore(Path(temp_dir) / "annotations.db")
             store.initialize()
             self.assertEqual(NEW_LABELS, (
+                "Electronic---Minimal-Deep-Tech",
                 "Electronic---Microhouse",
                 "Electronic---RoMinimal",
-                "Electronic---DeepTech-Minimal",
             ))
             self.assertEqual(REVIEW_STATES, {
                 "positive", "negative", "uncertain", "unreviewed"
@@ -90,9 +95,9 @@ iterative-stratification>=0.1.9,<1
 
 ```python
 NEW_LABELS = (
+    "Electronic---Minimal-Deep-Tech",
     "Electronic---Microhouse",
     "Electronic---RoMinimal",
-    "Electronic---DeepTech-Minimal",
 )
 REVIEW_STATES = {"positive", "negative", "uncertain", "unreviewed"}
 ROUND_SIZE_PER_LABEL = 100
@@ -339,7 +344,7 @@ def create_round(
 - [ ] Export UTF-8 JSONL with one row per reviewed track and no local absolute path when `portable=True`.
 
 ```json
-{"track_id":"sha256:...","group_id":"group:...","audio_ref":"audio/sha256...flac","split":"train","duration_seconds":384.2,"window_offsets_seconds":[61.84,177.1,292.36],"source_labels":["Electronic---Microhouse"],"labels":{"Electronic---Microhouse":"positive","Electronic---RoMinimal":"negative","Electronic---DeepTech-Minimal":"uncertain"}}
+{"track_id":"sha256:...","group_id":"group:...","audio_ref":"audio/sha256...flac","split":"train","duration_seconds":384.2,"window_offsets_seconds":[61.84,177.1,292.36],"source_labels":["Electronic---Microhouse"],"labels":{"Electronic---Minimal-Deep-Tech":"uncertain","Electronic---Microhouse":"positive","Electronic---RoMinimal":"negative"}}
 ```
 
 `uncertain` is preserved and later masked; `unreviewed` rows are excluded. Also export `dataset_summary.json` containing counts by split/state/source and the split-audit hash.
